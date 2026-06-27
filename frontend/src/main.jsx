@@ -51,11 +51,16 @@ const WILDARTEN = [
   "Sonstiges",
 ];
 
-const markerIcon = (type, archived = false) => L.divIcon({
+function markerLetter(value, fallback) {
+  const first = String(value || "").trim().match(/[\p{L}\p{N}]/u)?.[0];
+  return (first || fallback).toLocaleUpperCase("de-DE");
+}
+
+const markerIcon = (type, item = null, archived = false) => L.divIcon({
   className: `pin ${type} ${archived ? "is-archived" : ""}`,
-  html: `<span>${type === "kanzel" ? "K" : "A"}</span>`,
-  iconSize: [34, 34],
-  iconAnchor: [17, 17],
+  html: `<span>${type === "kanzel" ? markerLetter(item?.typ, "K") : markerLetter(item?.wildart, "A")}</span>`,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18],
 });
 
 const originIcon = L.divIcon({
@@ -174,7 +179,7 @@ function MapScreen({ data, selected, setSelected, setCreateAt, originPick, setOr
           <Marker
             key={kanzel.id}
             position={[kanzel.position_lat, kanzel.position_lng]}
-            icon={markerIcon("kanzel", kanzel.status === "archiviert")}
+            icon={markerIcon("kanzel", kanzel, kanzel.status === "archiviert")}
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
@@ -188,7 +193,7 @@ function MapScreen({ data, selected, setSelected, setCreateAt, originPick, setOr
           <Marker
             key={abschuss.id}
             position={[abschuss.position_lat, abschuss.position_lng]}
-            icon={markerIcon("abschuss", abschuss.status === "archiviert")}
+            icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert")}
             eventHandlers={{ click: () => setSelected({ type: "abschuss", id: abschuss.id }) }}
           />
         )) : null}
