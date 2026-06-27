@@ -10,7 +10,7 @@ import Database from "better-sqlite3";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const dataDir = path.join(root, "data");
-const dbPath = path.join(dataDir, "jagdapp.sqlite");
+const dbPath = process.env.DB_PATH || path.join(dataDir, "jagdapp.sqlite");
 const distDir = path.join(root, "frontend", "dist");
 const host = process.env.HOST || "10.66.66.1";
 const port = Number(process.env.PORT || 3067);

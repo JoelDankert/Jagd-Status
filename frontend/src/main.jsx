@@ -117,8 +117,8 @@ function App() {
         <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} setSelected={setSelected} />
       )}
 
-      {settingsOpen && <SettingsPanel data={data} load={load} />}
-      {activeSelected && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} />}
+      {settingsOpen && !originPick && <SettingsPanel data={data} load={load} />}
+      {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} />}
       {createAt && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={(next) => { setCreateAt(null); setForm(next); }} />}
       {form && <ObjectForm data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
       {originPick && <div className="pick-hint">Schussursprung wählen</div>}
@@ -153,6 +153,7 @@ function MapScreen({ data, selected, setSelected, setCreateAt, originPick, setOr
         <MapEvents setCreateAt={setCreateAt} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
+        {originPick ? <PickTarget originPick={originPick} /> : null}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
           <Marker
             key={kanzel.id}
@@ -263,6 +264,17 @@ function ShotLine({ abschuss, data }) {
   return <Polyline positions={[[origin.lat, origin.lng], [abschuss.position_lat, abschuss.position_lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 0.78, dashArray: "7 7" }} />;
 }
 
+function PickTarget({ originPick }) {
+  const target = originPick.target;
+  const origin = originPick.origin;
+  return (
+    <>
+      <Marker position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
+      {origin ? <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 0.9, dashArray: "7 7" }} /> : null}
+    </>
+  );
+}
+
 function FlyToSelection({ data, selected }) {
   const map = useMap();
   useEffect(() => {
@@ -328,6 +340,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const formId = useRef(form.id || localId()).current;
+  const [originLabel, setOriginLabel] = useState("");
   const [values, setValues] = useState({
     datum: today(),
     kanzel_id: "",
@@ -337,16 +350,19 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   });
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const origin = originPick?.formId === formId ? originPick.origin : null;
+  const picking = originPick?.formId === formId && !originPick.origin;
 
   useEffect(() => {
     if (!origin) return;
+    setOriginLabel(origin.type === "kanzel" ? "Kanzel gewählt" : "Punkt gewählt");
     setValues((current) => ({
       ...current,
       schuss_lat: origin.lat ?? "",
       schuss_lng: origin.lng ?? "",
       schuss_kanzel_id: origin.type === "kanzel" ? origin.id : "",
     }));
-  }, [origin?.lat, origin?.lng, origin?.id]);
+    setOriginPick(null);
+  }, [origin?.lat, origin?.lng, origin?.id, origin?.type, setOriginPick]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -365,7 +381,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   };
 
   return (
-    <div className="overlay">
+    <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" onSubmit={submit}>
         <header><h2>{form.type === "kanzel" ? "Kanzel" : "Abschuss"}</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {form.type === "kanzel" ? (
@@ -384,8 +400,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
             <label>Kanzel<select value={values.kanzel_id} onChange={(e) => set("kanzel_id", e.target.value)}><option value="">Keine</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
             <div className="origin-row">
-              <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin })}>Schussursprung wählen</button>
-              <span>{origin ? origin.type === "kanzel" ? "Kanzel gewählt" : "Punkt gewählt" : "optional"}</span>
+              <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung wählen</button>
+              <span>{originLabel || "optional"}</span>
             </div>
             <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
           </>

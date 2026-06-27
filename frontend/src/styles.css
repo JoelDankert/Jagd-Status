@@ -202,6 +202,9 @@ dd { margin: 0; text-align: right; }
   background: rgba(12, 17, 13, .35);
   z-index: 1000;
 }
+.overlay.is-picking {
+  display: none;
+}
 .modal {
   width: min(480px, 100%);
   max-height: calc(100vh - 36px);
