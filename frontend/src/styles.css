@@ -99,7 +99,20 @@ textarea { min-height: 80px; resize: vertical; }
   z-index: 700;
   display: grid;
   gap: 8px;
+  justify-items: start;
 }
+.map-tools button.loading { color: var(--green); }
+.map-status {
+  max-width: 180px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgba(251, 251, 248, .94);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 20px rgba(16, 24, 16, .14);
+  color: var(--muted);
+  font-size: 12px;
+}
+.error-status { color: var(--red); }
 .fab {
   position: absolute;
   right: 16px;

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import { Crosshair, Layers, List, LocateFixed, Map as MapIcon, Plus, Settings, Trash2, X } from "lucide-react";
+import { Layers, List, LocateFixed, Map as MapIcon, Plus, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
@@ -48,6 +48,10 @@ const originIcon = L.divIcon({
   iconSize: [18, 18],
   iconAnchor: [9, 9],
 });
+
+function localId() {
+  return `f-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function App() {
   const [data, setData] = useState(null);
@@ -147,7 +151,7 @@ function MapScreen({ data, selected, setSelected, setCreateAt, originPick, setOr
       <MapContainer center={center} zoom={14} zoomControl={false} className="map">
         <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <MapEvents setCreateAt={setCreateAt} originPick={originPick} setOriginPick={setOriginPick} />
-        <MapTools setCreateAt={setCreateAt} setSelfPos={setSelfPos} />
+        <MapTools setSelfPos={setSelfPos} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
           <Marker
@@ -156,7 +160,7 @@ function MapScreen({ data, selected, setSelected, setCreateAt, originPick, setOr
             icon={markerIcon("kanzel", kanzel.status === "archiviert")}
             eventHandlers={{
               click: (event) => {
-                L.DomEvent.stopPropagation(event);
+                if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
                 if (originPick) setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
                 else setSelected({ type: "kanzel", id: kanzel.id });
               },
@@ -207,27 +211,48 @@ function MapEvents({ setCreateAt, originPick, setOriginPick }) {
   return null;
 }
 
-function MapTools({ setCreateAt, setSelfPos }) {
+function MapTools({ setSelfPos }) {
   const map = useMap();
   const ref = useRef(null);
+  const [locating, setLocating] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
     if (!ref.current) return;
     L.DomEvent.disableClickPropagation(ref.current);
     L.DomEvent.disableScrollPropagation(ref.current);
   }, []);
+  const locate = () => {
+    setError("");
+    if (!navigator.geolocation) {
+      setError("Position nicht verfügbar");
+      return;
+    }
+    if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+      setError("Browser blockiert Position über HTTP");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const next = [p.coords.latitude, p.coords.longitude];
+        setSelfPos(next);
+        map.flyTo(next, Math.max(map.getZoom(), 16));
+        setLocating(false);
+      },
+      (err) => {
+        setError(err.code === 1 ? "Position erlaubt?" : "Position nicht gefunden");
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
+    );
+  };
   return (
     <div className="map-tools" ref={ref}>
       <button type="button" onClick={() => map.zoomIn()} title="Vergrößern">+</button>
       <button type="button" onClick={() => map.zoomOut()} title="Verkleinern">-</button>
-      <button type="button" onClick={() => navigator.geolocation?.getCurrentPosition((p) => {
-        const next = [p.coords.latitude, p.coords.longitude];
-        setSelfPos(next);
-        map.flyTo(next, Math.max(map.getZoom(), 15));
-      })} title="Position"><LocateFixed size={17} /></button>
-      <button type="button" onClick={() => {
-        const c = map.getCenter();
-        setCreateAt({ lat: c.lat, lng: c.lng });
-      }} title="Erstellen"><Crosshair size={17} /></button>
+      <button type="button" onClick={locate} title="Position" className={locating ? "loading" : ""}><LocateFixed size={17} /></button>
+      {locating ? <span className="map-status">Sucht</span> : null}
+      {error ? <span className="map-status error-status">{error}</span> : null}
     </div>
   );
 }
@@ -302,7 +327,7 @@ function CreateWindow({ point, close, openForm }) {
 function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const formId = useRef(form.id || crypto.randomUUID()).current;
+  const formId = useRef(form.id || localId()).current;
   const [values, setValues] = useState({
     datum: today(),
     kanzel_id: "",
