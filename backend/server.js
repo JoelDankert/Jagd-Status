@@ -14,17 +14,17 @@ const dbPath = path.join(dataDir, "jagdapp.sqlite");
 const distDir = path.join(root, "frontend", "dist");
 const host = process.env.HOST || "10.66.66.1";
 const port = Number(process.env.PORT || 3067);
-
-const app = express();
 const sessions = new Map();
 
-app.use(express.json({ limit: "256kb" }));
-app.use(cookieParser());
-
 fs.mkdirSync(dataDir, { recursive: true });
+
 const db = new Database(dbPath);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+
+const app = express();
+app.use(express.json({ limit: "256kb" }));
+app.use(cookieParser());
 
 function id() {
   return crypto.randomUUID();
@@ -34,26 +34,32 @@ function now() {
   return new Date().toISOString();
 }
 
-function text(value) {
+function clean(value) {
   return String(value ?? "").trim();
 }
 
-function status(value) {
+function optional(value) {
+  const valueText = clean(value);
+  return valueText || null;
+}
+
+function num(value, label) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`${label} fehlt`);
+  return parsed;
+}
+
+function optionalNum(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function itemStatus(value) {
   return value === "archiviert" ? "archiviert" : "aktiv";
 }
 
-function number(value, label) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) throw new Error(`${label} fehlt`);
-  return n;
-}
-
-function optional(value) {
-  const v = text(value);
-  return v || null;
-}
-
-function migrate() {
+function setupDb() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS revier (
       id TEXT PRIMARY KEY,
@@ -64,10 +70,11 @@ function migrate() {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS standort (
+    CREATE TABLE IF NOT EXISTS kanzel (
       id TEXT PRIMARY KEY,
       revier_id TEXT NOT NULL,
       name TEXT NOT NULL,
+      typ TEXT,
       position_lat REAL NOT NULL,
       position_lng REAL NOT NULL,
       status TEXT NOT NULL DEFAULT 'aktiv',
@@ -77,27 +84,15 @@ function migrate() {
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS kanzel (
-      id TEXT PRIMARY KEY,
-      revier_id TEXT NOT NULL,
-      standort_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      typ TEXT,
-      status TEXT NOT NULL DEFAULT 'aktiv',
-      notiz TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE,
-      FOREIGN KEY (standort_id) REFERENCES standort(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS abschuss (
       id TEXT PRIMARY KEY,
       revier_id TEXT NOT NULL,
-      standort_id TEXT,
       kanzel_id TEXT,
       position_lat REAL NOT NULL,
       position_lng REAL NOT NULL,
+      schuss_lat REAL,
+      schuss_lng REAL,
+      schuss_kanzel_id TEXT,
       datum TEXT NOT NULL,
       wildart TEXT NOT NULL,
       schuetz_name TEXT NOT NULL,
@@ -106,15 +101,14 @@ function migrate() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE,
-      FOREIGN KEY (standort_id) REFERENCES standort(id) ON DELETE SET NULL,
-      FOREIGN KEY (kanzel_id) REFERENCES kanzel(id) ON DELETE SET NULL
+      FOREIGN KEY (kanzel_id) REFERENCES kanzel(id) ON DELETE SET NULL,
+      FOREIGN KEY (schuss_kanzel_id) REFERENCES kanzel(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS settings (
       id TEXT PRIMARY KEY,
       revier_id TEXT NOT NULL UNIQUE,
       show_self_location INTEGER NOT NULL DEFAULT 1,
-      show_standorte INTEGER NOT NULL DEFAULT 1,
       show_kanzeln INTEGER NOT NULL DEFAULT 1,
       show_abschuesse INTEGER NOT NULL DEFAULT 1,
       show_archived INTEGER NOT NULL DEFAULT 0,
@@ -126,26 +120,14 @@ function migrate() {
   `);
 }
 
-function verifyPassword(password, stored) {
-  if (stored?.startsWith("$2")) return bcrypt.compareSync(password, stored);
-  if (!stored?.startsWith("pbkdf2_sha256$")) return false;
-  try {
-    const [, rounds, salt64, hash64] = stored.split("$");
-    const actual = crypto.pbkdf2Sync(password, Buffer.from(salt64, "base64"), Number(rounds), 32, "sha256");
-    return crypto.timingSafeEqual(actual, Buffer.from(hash64, "base64"));
-  } catch {
-    return false;
-  }
-}
-
 function ensureSettings(revierId) {
-  const found = db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
-  if (found) return found;
+  const settings = db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
+  if (settings) return settings;
   db.prepare(`
     INSERT INTO settings (
-      id, revier_id, show_self_location, show_standorte, show_kanzeln,
+      id, revier_id, show_self_location, show_kanzeln,
       show_abschuesse, show_archived, show_reviergrenze
-    ) VALUES (?, ?, 1, 1, 1, 1, 0, 1)
+    ) VALUES (?, ?, 1, 1, 1, 0, 1)
   `).run(id(), revierId);
   return db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
 }
@@ -157,21 +139,21 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function apiError(res, error) {
+function fail(res, error) {
   res.status(400).json({ error: error.message || "Fehler" });
 }
 
-migrate();
+setupDb();
 
 app.post("/api/login", (req, res) => {
   try {
-    const name = text(req.body.name);
-    const passwort = text(req.body.passwort);
-    if (!name || !passwort) throw new Error("Reviername und Passwort fehlen");
+    const name = clean(req.body.name);
+    const passwort = clean(req.body.passwort);
+    if (!name || !passwort) throw new Error("Login fehlt");
 
     let revier = db.prepare("SELECT * FROM revier WHERE name = ?").get(name);
     if (!revier) {
-      const count = db.prepare("SELECT COUNT(*) AS c FROM revier").get().c;
+      const count = db.prepare("SELECT COUNT(*) AS count FROM revier").get().count;
       if (count > 0) return res.status(401).json({ error: "Login falsch" });
       const stamp = now();
       const revierId = id();
@@ -179,17 +161,16 @@ app.post("/api/login", (req, res) => {
         .run(revierId, name, bcrypt.hashSync(passwort, 12), stamp, stamp);
       ensureSettings(revierId);
       revier = db.prepare("SELECT * FROM revier WHERE id = ?").get(revierId);
-    } else if (!verifyPassword(passwort, revier.passwort_hash)) {
+    } else if (!bcrypt.compareSync(passwort, revier.passwort_hash)) {
       return res.status(401).json({ error: "Login falsch" });
     }
 
-    ensureSettings(revier.id);
     const token = crypto.randomBytes(32).toString("base64url");
     sessions.set(token, revier.id);
     res.cookie("jagd_session", token, { httpOnly: true, sameSite: "lax" });
     res.json({ ok: true });
   } catch (error) {
-    apiError(res, error);
+    fail(res, error);
   }
 });
 
@@ -200,27 +181,30 @@ app.post("/api/logout", (req, res) => {
 });
 
 app.get("/api/revier", requireAuth, (req, res) => {
-  const revier = db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId);
-  res.json({ revier });
+  res.json({
+    revier: db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId),
+  });
 });
 
 app.get("/api/map-data", requireAuth, (req, res) => {
-  const revier = db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId);
-  const settings = ensureSettings(req.revierId);
   res.json({
-    revier,
-    settings,
-    standorte: db.prepare("SELECT * FROM standort WHERE revier_id = ? ORDER BY name").all(req.revierId),
+    revier: db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId),
+    settings: ensureSettings(req.revierId),
     kanzeln: db.prepare("SELECT * FROM kanzel WHERE revier_id = ? ORDER BY name").all(req.revierId),
     abschuesse: db.prepare("SELECT * FROM abschuss WHERE revier_id = ? ORDER BY datum DESC, created_at DESC").all(req.revierId),
-    schuetzen: db.prepare("SELECT DISTINCT schuetz_name FROM abschuss WHERE revier_id = ? AND schuetz_name != '' ORDER BY schuetz_name").all(req.revierId).map((r) => r.schuetz_name)
+    schuetzen: db.prepare("SELECT DISTINCT schuetz_name FROM abschuss WHERE revier_id = ? AND schuetz_name != '' ORDER BY schuetz_name").all(req.revierId).map((row) => row.schuetz_name),
   });
 });
 
 app.post("/api/settings", requireAuth, (req, res) => {
   const allowed = [
-    "show_self_location", "show_standorte", "show_kanzeln", "show_abschuesse",
-    "show_archived", "show_reviergrenze", "map_date_filter_from", "map_date_filter_to"
+    "show_self_location",
+    "show_kanzeln",
+    "show_abschuesse",
+    "show_archived",
+    "show_reviergrenze",
+    "map_date_filter_from",
+    "map_date_filter_to",
   ];
   const values = {};
   for (const key of allowed) {
@@ -234,66 +218,69 @@ app.post("/api/settings", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/standorte", requireAuth, (req, res) => {
+app.post("/api/kanzeln", requireAuth, (req, res) => {
   try {
-    const name = text(req.body.name);
+    const name = clean(req.body.name);
     if (!name) throw new Error("Name fehlt");
     const stamp = now();
     const itemId = id();
     db.prepare(`
-      INSERT INTO standort (id, revier_id, name, position_lat, position_lng, status, notiz, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO kanzel (
+        id, revier_id, name, typ, position_lat, position_lng,
+        status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      itemId, req.revierId, name,
-      number(req.body.position_lat, "Position"), number(req.body.position_lng, "Position"),
-      status(req.body.status), optional(req.body.notiz), stamp, stamp
+      itemId,
+      req.revierId,
+      name,
+      optional(req.body.typ),
+      num(req.body.position_lat, "Position"),
+      num(req.body.position_lng, "Position"),
+      itemStatus(req.body.status),
+      optional(req.body.notiz),
+      stamp,
+      stamp
     );
     res.status(201).json({ id: itemId });
   } catch (error) {
-    apiError(res, error);
-  }
-});
-
-app.post("/api/kanzeln", requireAuth, (req, res) => {
-  try {
-    const standortId = text(req.body.standort_id);
-    const name = text(req.body.name);
-    if (!standortId || !name) throw new Error("Standort oder Name fehlt");
-    const standort = db.prepare("SELECT id FROM standort WHERE id = ? AND revier_id = ?").get(standortId, req.revierId);
-    if (!standort) throw new Error("Standort fehlt");
-    const stamp = now();
-    const itemId = id();
-    db.prepare(`
-      INSERT INTO kanzel (id, revier_id, standort_id, name, typ, status, notiz, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(itemId, req.revierId, standortId, name, optional(req.body.typ), status(req.body.status), optional(req.body.notiz), stamp, stamp);
-    res.status(201).json({ id: itemId });
-  } catch (error) {
-    apiError(res, error);
+    fail(res, error);
   }
 });
 
 app.post("/api/abschuesse", requireAuth, (req, res) => {
   try {
-    const datum = text(req.body.datum);
-    const wildart = text(req.body.wildart);
-    const schuetz = text(req.body.schuetz_name);
-    if (!datum || !wildart || !schuetz) throw new Error("Pflichtfelder fehlen");
+    const datum = clean(req.body.datum);
+    const wildart = clean(req.body.wildart);
+    const schuetzName = clean(req.body.schuetz_name);
+    if (!datum || !wildart || !schuetzName) throw new Error("Pflichtfelder fehlen");
     const stamp = now();
     const itemId = id();
     db.prepare(`
       INSERT INTO abschuss (
-        id, revier_id, standort_id, kanzel_id, position_lat, position_lng,
-        datum, wildart, schuetz_name, status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, revier_id, kanzel_id, position_lat, position_lng, schuss_lat,
+        schuss_lng, schuss_kanzel_id, datum, wildart, schuetz_name,
+        status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      itemId, req.revierId, optional(req.body.standort_id), optional(req.body.kanzel_id),
-      number(req.body.position_lat, "Position"), number(req.body.position_lng, "Position"),
-      datum, wildart, schuetz, status(req.body.status), optional(req.body.notiz), stamp, stamp
+      itemId,
+      req.revierId,
+      optional(req.body.kanzel_id),
+      num(req.body.position_lat, "Position"),
+      num(req.body.position_lng, "Position"),
+      optionalNum(req.body.schuss_lat),
+      optionalNum(req.body.schuss_lng),
+      optional(req.body.schuss_kanzel_id),
+      datum,
+      wildart,
+      schuetzName,
+      itemStatus(req.body.status),
+      optional(req.body.notiz),
+      stamp,
+      stamp
     );
     res.status(201).json({ id: itemId });
   } catch (error) {
-    apiError(res, error);
+    fail(res, error);
   }
 });
 
@@ -303,10 +290,10 @@ function patch(table, allowed) {
       const values = {};
       for (const key of allowed) {
         if (!(key in req.body)) continue;
-        if (key === "position_lat" || key === "position_lng") values[key] = number(req.body[key], "Position");
-        else if (key === "status") values[key] = status(req.body[key]);
-        else if (key.endsWith("_id") || key === "notiz" || key === "typ") values[key] = optional(req.body[key]);
-        else values[key] = text(req.body[key]);
+        if (["position_lat", "position_lng", "schuss_lat", "schuss_lng"].includes(key)) values[key] = optionalNum(req.body[key]);
+        else if (key === "status") values[key] = itemStatus(req.body[key]);
+        else if (key.endsWith("_id") || key === "typ" || key === "notiz") values[key] = optional(req.body[key]);
+        else values[key] = clean(req.body[key]);
       }
       if (!Object.keys(values).length) return res.json({ ok: true });
       values.updated_at = now();
@@ -316,7 +303,7 @@ function patch(table, allowed) {
       if (!result.changes) return res.status(404).json({ error: "Nicht gefunden" });
       res.json({ ok: true });
     } catch (error) {
-      apiError(res, error);
+      fail(res, error);
     }
   };
 }
@@ -329,9 +316,8 @@ function remove(table) {
   };
 }
 
-app.patch("/api/standorte/:id", requireAuth, patch("standort", ["name", "position_lat", "position_lng", "status", "notiz"]));
-app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["standort_id", "name", "typ", "status", "notiz"]));
-app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["standort_id", "kanzel_id", "position_lat", "position_lng", "datum", "wildart", "schuetz_name", "status", "notiz"]));
+app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "notiz"]));
+app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "wildart", "schuetz_name", "status", "notiz"]));
 app.delete("/api/kanzeln/:id", requireAuth, remove("kanzel"));
 app.delete("/api/abschuesse/:id", requireAuth, remove("abschuss"));
 

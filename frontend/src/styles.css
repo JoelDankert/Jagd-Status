@@ -115,21 +115,27 @@ textarea { min-height: 80px; resize: vertical; }
 
 .pin {
   width: 34px !important;
-  height: 42px !important;
+  height: 34px !important;
   display: grid;
   place-items: center;
   color: #fff;
   font-weight: 800;
   background: var(--green);
   border: 2px solid #fff;
-  border-radius: 50% 50% 50% 8px;
-  transform: rotate(-45deg);
+  border-radius: 50%;
   box-shadow: 0 8px 20px rgba(0,0,0,.26);
 }
-.pin span { transform: rotate(45deg); }
-.pin.kanzel { background: var(--blue); transform: rotate(-45deg) scale(.86); }
+.pin.kanzel { background: var(--blue); }
 .pin.abschuss { background: var(--amber); }
 .pin.is-archived { opacity: .45; }
+.origin-pin {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 50%;
+  background: var(--red);
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 6px rgba(143,47,47,.18);
+}
 .self-marker {
   width: 18px !important;
   height: 18px !important;
@@ -194,6 +200,33 @@ dd { margin: 0; text-align: right; }
 .modal.small { width: min(360px, 100%); }
 .choice { justify-content: flex-start; padding: 10px 12px; }
 .error { min-height: 18px; color: var(--red); font-size: 14px; margin: 0; }
+.origin-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.origin-row button {
+  min-height: 38px;
+  border-radius: 7px;
+  background: var(--soft);
+}
+.origin-row span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.pick-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 1200;
+  padding: 9px 12px;
+  color: #fff;
+  background: rgba(23,32,24,.92);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
 
 .list-screen { padding: 18px; overflow: auto; }
 .list-screen > * { max-width: 1080px; margin-left: auto; margin-right: auto; }

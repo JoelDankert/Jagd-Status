@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import { Crosshair, Eye, Layers, List, LocateFixed, Map as MapIcon, Plus, Settings, Trash2, X } from "lucide-react";
+import { Crosshair, Layers, List, LocateFixed, Map as MapIcon, Plus, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
@@ -35,11 +35,18 @@ const seasonStart = () => {
   return `${d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1}-04-01`;
 };
 
-const icon = (kind, archived = false) => L.divIcon({
-  className: `pin ${kind} ${archived ? "is-archived" : ""}`,
-  html: `<span>${kind === "standort" ? "S" : kind === "kanzel" ? "K" : "A"}</span>`,
-  iconSize: [34, 42],
-  iconAnchor: [17, 40],
+const markerIcon = (type, archived = false) => L.divIcon({
+  className: `pin ${type} ${archived ? "is-archived" : ""}`,
+  html: `<span>${type === "kanzel" ? "K" : "A"}</span>`,
+  iconSize: [34, 34],
+  iconAnchor: [17, 17],
+});
+
+const originIcon = L.divIcon({
+  className: "origin-pin",
+  html: "",
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
 });
 
 function App() {
@@ -50,8 +57,9 @@ function App() {
   const [selected, setSelected] = useState(null);
   const [createAt, setCreateAt] = useState(null);
   const [form, setForm] = useState(null);
+  const [originPick, setOriginPick] = useState(null);
   const [selfPos, setSelfPos] = useState(null);
-  const [listTab, setListTab] = useState("standorte");
+  const [listTab, setListTab] = useState("kanzeln");
   const [filters, setFilters] = useState({ q: "", status: "alle", from: "", to: "" });
 
   const load = async () => setData(await api("/api/map-data"));
@@ -96,8 +104,8 @@ function App() {
           selected={selected}
           setSelected={setSelected}
           setCreateAt={setCreateAt}
-          settingsOpen={settingsOpen}
-          load={load}
+          originPick={originPick}
+          setOriginPick={setOriginPick}
           selfPos={selfPos}
           setSelfPos={setSelfPos}
         />
@@ -106,9 +114,10 @@ function App() {
       )}
 
       {settingsOpen && <SettingsPanel data={data} load={load} />}
-      {activeSelected && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={setForm} />}
-      {createAt && <CreateWindow data={data} point={createAt} selected={selected} close={() => setCreateAt(null)} openForm={(next) => { setCreateAt(null); setForm(next); }} />}
-      {form && <ObjectForm data={data} form={form} close={() => setForm(null)} load={async () => { await load(); setForm(null); }} />}
+      {activeSelected && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} />}
+      {createAt && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={(next) => { setCreateAt(null); setForm(next); }} />}
+      {form && <ObjectForm data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
+      {originPick && <div className="pick-hint">Schussursprung wählen</div>}
     </div>
   );
 }
@@ -122,49 +131,68 @@ function Login({ error, onLogin }) {
         <h1>Jagd</h1>
         <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" /></label>
         <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" /></label>
-        <button className="primary">Anmelden</button>
+        <button className="primary" type="submit">Anmelden</button>
         <p className="error">{error}</p>
       </form>
     </main>
   );
 }
 
-function MapScreen({ data, selected, setSelected, setCreateAt, selfPos, setSelfPos }) {
+function MapScreen({ data, selected, setSelected, setCreateAt, originPick, setOriginPick, selfPos, setSelfPos }) {
   const visible = useVisibleData(data);
-  const center = visible.standorte[0] ? [visible.standorte[0].position_lat, visible.standorte[0].position_lng] : [51.1657, 10.4515];
+  const first = visible.kanzeln[0] || visible.abschuesse[0];
+  const center = first ? [first.position_lat, first.position_lng] : [51.1657, 10.4515];
   return (
     <main className="map-shell">
       <MapContainer center={center} zoom={14} zoomControl={false} className="map">
         <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <MapEvents setCreateAt={setCreateAt} />
-        <MapTools selfPos={selfPos} setSelfPos={setSelfPos} />
-        {Number(data.settings.show_standorte) ? visible.standorte.map((s) => (
-          <Marker key={s.id} position={[s.position_lat, s.position_lng]} icon={icon("standort", s.status === "archiviert")} eventHandlers={{ click: () => setSelected({ type: "standort", id: s.id }) }} />
+        <MapEvents setCreateAt={setCreateAt} originPick={originPick} setOriginPick={setOriginPick} />
+        <MapTools setCreateAt={setCreateAt} setSelfPos={setSelfPos} />
+        {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
+        {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
+          <Marker
+            key={kanzel.id}
+            position={[kanzel.position_lat, kanzel.position_lng]}
+            icon={markerIcon("kanzel", kanzel.status === "archiviert")}
+            eventHandlers={{
+              click: (event) => {
+                L.DomEvent.stopPropagation(event);
+                if (originPick) setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
+                else setSelected({ type: "kanzel", id: kanzel.id });
+              },
+            }}
+          />
         )) : null}
-        {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((k) => {
-          const s = data.standorte.find((x) => x.id === k.standort_id);
-          if (!s) return null;
-          return <Marker key={k.id} position={[s.position_lat, s.position_lng]} icon={icon("kanzel", k.status === "archiviert")} eventHandlers={{ click: () => setSelected({ type: "kanzel", id: k.id }) }} />;
-        }) : null}
-        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((a) => (
-          <Marker key={a.id} position={[a.position_lat, a.position_lng]} icon={icon("abschuss", a.status === "archiviert")} eventHandlers={{ click: () => setSelected({ type: "abschuss", id: a.id }) }} />
+        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => (
+          <Marker
+            key={abschuss.id}
+            position={[abschuss.position_lat, abschuss.position_lng]}
+            icon={markerIcon("abschuss", abschuss.status === "archiviert")}
+            eventHandlers={{ click: () => setSelected({ type: "abschuss", id: abschuss.id }) }}
+          />
         )) : null}
-        {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18] })} /> : null}
+        {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
+        {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
         {selected && <FlyToSelection data={data} selected={selected} />}
       </MapContainer>
-      <button className="fab" onClick={() => setCreateAt({ lat: center[0], lng: center[1] })}><Plus size={22} /></button>
+      <button className="fab" type="button" onClick={() => setCreateAt({ lat: center[0], lng: center[1] })}><Plus size={22} /></button>
     </main>
   );
 }
 
-function MapEvents({ setCreateAt }) {
-  const timer = React.useRef(null);
+function MapEvents({ setCreateAt, originPick, setOriginPick }) {
+  const timer = useRef(null);
   useMapEvents({
     contextmenu(e) {
-      setCreateAt(e.latlng);
+      if (originPick) setOriginPick({ ...originPick, origin: { type: "point", lat: e.latlng.lat, lng: e.latlng.lng } });
+      else setCreateAt(e.latlng);
+    },
+    click(e) {
+      if (originPick) setOriginPick({ ...originPick, origin: { type: "point", lat: e.latlng.lat, lng: e.latlng.lng } });
     },
     mousedown(e) {
-      timer.current = setTimeout(() => setCreateAt(e.latlng), 650);
+      if (originPick) return;
+      timer.current = setTimeout(() => setCreateAt(e.latlng), 700);
     },
     mouseup() {
       clearTimeout(timer.current);
@@ -172,46 +200,49 @@ function MapEvents({ setCreateAt }) {
     dragstart() {
       clearTimeout(timer.current);
     },
-    touchstart(e) {
-      timer.current = setTimeout(() => setCreateAt(e.latlng), 700);
-    },
-    touchend() {
-      clearTimeout(timer.current);
-    },
     zoomstart() {
-      clearTimeout(timer.current);
-    },
-    movestart() {
       clearTimeout(timer.current);
     },
   });
   return null;
 }
 
-function MapTools({ selfPos, setSelfPos }) {
+function MapTools({ setCreateAt, setSelfPos }) {
   const map = useMap();
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    L.DomEvent.disableClickPropagation(ref.current);
+    L.DomEvent.disableScrollPropagation(ref.current);
+  }, []);
   return (
-    <div className="map-tools">
-      <button onClick={() => map.zoomIn()} title="Vergrößern">+</button>
-      <button onClick={() => map.zoomOut()} title="Verkleinern">-</button>
-      <button onClick={() => navigator.geolocation?.getCurrentPosition((p) => {
+    <div className="map-tools" ref={ref}>
+      <button type="button" onClick={() => map.zoomIn()} title="Vergrößern">+</button>
+      <button type="button" onClick={() => map.zoomOut()} title="Verkleinern">-</button>
+      <button type="button" onClick={() => navigator.geolocation?.getCurrentPosition((p) => {
         const next = [p.coords.latitude, p.coords.longitude];
         setSelfPos(next);
         map.flyTo(next, Math.max(map.getZoom(), 15));
       })} title="Position"><LocateFixed size={17} /></button>
-      {selfPos ? <button onClick={() => map.flyTo(selfPos, 15)} title="Zentrieren"><Crosshair size={17} /></button> : null}
+      <button type="button" onClick={() => {
+        const c = map.getCenter();
+        setCreateAt({ lat: c.lat, lng: c.lng });
+      }} title="Erstellen"><Crosshair size={17} /></button>
     </div>
   );
+}
+
+function ShotLine({ abschuss, data }) {
+  const origin = shotOrigin(abschuss, data);
+  if (!origin) return null;
+  return <Polyline positions={[[origin.lat, origin.lng], [abschuss.position_lat, abschuss.position_lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 0.78, dashArray: "7 7" }} />;
 }
 
 function FlyToSelection({ data, selected }) {
   const map = useMap();
   useEffect(() => {
     const item = findObject(data, selected);
-    if (!item) return;
-    let point = item;
-    if (selected.type === "kanzel") point = data.standorte.find((s) => s.id === item.standort_id);
-    if (point) map.flyTo([point.position_lat, point.position_lng], Math.max(map.getZoom(), 15), { duration: 0.4 });
+    if (item) map.flyTo([item.position_lat, item.position_lng], Math.max(map.getZoom(), 15), { duration: 0.35 });
   }, [selected?.id]);
   return null;
 }
@@ -236,18 +267,17 @@ function SettingsPanel({ data, load }) {
       <h2><Layers size={18} /> Settings</h2>
       {[
         ["show_self_location", "Position"],
-        ["show_standorte", "Standorte"],
         ["show_kanzeln", "Kanzeln"],
         ["show_abschuesse", "Abschüsse"],
         ["show_archived", "Archiv"],
         ["show_reviergrenze", "Grenze"],
       ].map(([key, label]) => <label className="check" key={key}><input type="checkbox" checked={Boolean(Number(s[key]))} onChange={(e) => save(key, e.target.checked)} />{label}</label>)}
       <div className="chips">
-        <button onClick={() => range("today")}>Heute</button>
-        <button onClick={() => range("week")}>7 Tage</button>
-        <button onClick={() => range("month")}>Monat</button>
-        <button onClick={() => range("season")}>Saison</button>
-        <button onClick={() => range("all")}>Alle</button>
+        <button type="button" onClick={() => range("today")}>Heute</button>
+        <button type="button" onClick={() => range("week")}>7 Tage</button>
+        <button type="button" onClick={() => range("month")}>Monat</button>
+        <button type="button" onClick={() => range("season")}>Saison</button>
+        <button type="button" onClick={() => range("all")}>Alle</button>
       </div>
       <div className="two">
         <label>Von<input type="date" value={s.map_date_filter_from || ""} onChange={(e) => save("map_date_filter_from", e.target.value)} /></label>
@@ -257,71 +287,92 @@ function SettingsPanel({ data, load }) {
   );
 }
 
-function CreateWindow({ data, point, selected, close, openForm }) {
-  const standort = selected?.type === "standort" ? findObject(data, selected) : null;
+function CreateWindow({ point, close, openForm }) {
   return (
     <div className="overlay">
       <section className="modal small">
-        <header><h2>Erstellen</h2><button onClick={close}><X size={18} /></button></header>
-        <button className="choice" onClick={() => openForm({ type: "standort", point })}>Standort</button>
-        <button className="choice" onClick={() => openForm({ type: "abschuss", point, standortId: standort?.id || "" })}>Abschuss</button>
-        {standort ? <button className="choice" onClick={() => openForm({ type: "kanzel", point, standortId: standort.id })}>Kanzel</button> : null}
+        <header><h2>Erstellen</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
+        <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
       </section>
     </div>
   );
 }
 
-function ObjectForm({ data, form, close, load }) {
+function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [error, setError] = useState("");
-  const [values, setValues] = useState(() => ({
+  const [saving, setSaving] = useState(false);
+  const formId = useRef(form.id || crypto.randomUUID()).current;
+  const [values, setValues] = useState({
     datum: today(),
-    standort_id: form.standortId || "",
     kanzel_id: "",
-  }));
-  const set = (key, value) => setValues((v) => ({ ...v, [key]: value }));
+    schuss_lat: "",
+    schuss_lng: "",
+    schuss_kanzel_id: "",
+  });
+  const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
+  const origin = originPick?.formId === formId ? originPick.origin : null;
+
+  useEffect(() => {
+    if (!origin) return;
+    setValues((current) => ({
+      ...current,
+      schuss_lat: origin.lat ?? "",
+      schuss_lng: origin.lng ?? "",
+      schuss_kanzel_id: origin.type === "kanzel" ? origin.id : "",
+    }));
+  }, [origin?.lat, origin?.lng, origin?.id]);
+
   const submit = async (e) => {
     e.preventDefault();
+    setSaving(true);
+    setError("");
     try {
       const body = { ...values, position_lat: form.point.lat, position_lng: form.point.lng };
-      const path = form.type === "standort" ? "/api/standorte" : form.type === "kanzel" ? "/api/kanzeln" : "/api/abschuesse";
+      const path = form.type === "kanzel" ? "/api/kanzeln" : "/api/abschuesse";
       await api(path, { method: "POST", body });
       await load();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSaving(false);
     }
   };
+
   return (
     <div className="overlay">
       <form className="modal" onSubmit={submit}>
-        <header><h2>{form.type === "standort" ? "Standort" : form.type === "kanzel" ? "Kanzel" : "Abschuss"}</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        {form.type === "standort" && <>
-          <label>Name<input required onChange={(e) => set("name", e.target.value)} /></label>
-          <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
-        </>}
-        {form.type === "kanzel" && <>
-          <label>Standort<SelectStandort data={data} value={values.standort_id} onChange={(v) => set("standort_id", v)} required /></label>
-          <label>Name<input required onChange={(e) => set("name", e.target.value)} /></label>
-          <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
-        </>}
-        {form.type === "abschuss" && <>
-          <div className="two">
-            <label>Datum<input required type="date" value={values.datum} onChange={(e) => set("datum", e.target.value)} /></label>
-            <label>Wildart<input required onChange={(e) => set("wildart", e.target.value)} /></label>
-          </div>
-          <label>Schütze<input required list="schuetzen" onChange={(e) => set("schuetz_name", e.target.value)} /></label>
-          <datalist id="schuetzen">{data.schuetzen.map((n) => <option key={n} value={n} />)}</datalist>
-          <label>Standort<SelectStandort data={data} value={values.standort_id} onChange={(v) => set("standort_id", v)} /></label>
-          <label>Kanzel<SelectKanzel data={data} standortId={values.standort_id} value={values.kanzel_id} onChange={(v) => set("kanzel_id", v)} /></label>
-          <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
-        </>}
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : "Abschuss"}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        {form.type === "kanzel" ? (
+          <>
+            <label>Name<input required onChange={(e) => set("name", e.target.value)} /></label>
+            <label>Typ<input onChange={(e) => set("typ", e.target.value)} /></label>
+            <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
+          </>
+        ) : (
+          <>
+            <div className="two">
+              <label>Datum<input required type="date" value={values.datum} onChange={(e) => set("datum", e.target.value)} /></label>
+              <label>Wildart<input required onChange={(e) => set("wildart", e.target.value)} /></label>
+            </div>
+            <label>Schütze<input required list="schuetzen" onChange={(e) => set("schuetz_name", e.target.value)} /></label>
+            <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
+            <label>Kanzel<select value={values.kanzel_id} onChange={(e) => set("kanzel_id", e.target.value)}><option value="">Keine</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
+            <div className="origin-row">
+              <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin })}>Schussursprung wählen</button>
+              <span>{origin ? origin.type === "kanzel" ? "Kanzel gewählt" : "Punkt gewählt" : "optional"}</span>
+            </div>
+            <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
+          </>
+        )}
         <p className="error">{error}</p>
-        <button className="primary">Speichern</button>
+        <button className="primary" type="submit" disabled={saving}>{saving ? "Speichert..." : "Speichern"}</button>
       </form>
     </div>
   );
 }
 
-function DetailPanel({ data, selected, item, close, load, openForm }) {
+function DetailPanel({ data, selected, item, close, load }) {
   const archive = async () => {
     await api(`/api/${apiName(selected.type)}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
     await load();
@@ -331,41 +382,34 @@ function DetailPanel({ data, selected, item, close, load, openForm }) {
     close();
     await load();
   };
-  const standort = selected.type === "standort" ? item : data.standorte.find((s) => s.id === item.standort_id);
   return (
     <aside className="detail">
-      <header><h2>{item.name || item.wildart}</h2><button onClick={close}><X size={18} /></button></header>
+      <header><h2>{item.name || item.wildart}</h2><button type="button" onClick={close}><X size={18} /></button></header>
       <p className="muted">{item.status === "archiviert" ? "Archiviert" : "Aktiv"}</p>
       <Rows selected={selected} item={item} data={data} />
       {item.notiz ? <p>{item.notiz}</p> : null}
       <div className="actions">
-        {selected.type === "standort" ? <>
-          <button onClick={() => openForm({ type: "kanzel", point: { lat: item.position_lat, lng: item.position_lng }, standortId: item.id })}>Kanzel</button>
-          <button onClick={() => openForm({ type: "abschuss", point: { lat: item.position_lat, lng: item.position_lng }, standortId: item.id })}>Abschuss</button>
-        </> : null}
-        <button onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
-        {selected.type !== "standort" ? <button className="danger" onClick={del}><Trash2 size={16} />Löschen</button> : null}
+        <button type="button" onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+        <button type="button" className="danger" onClick={del}><Trash2 size={16} />Löschen</button>
       </div>
-      {selected.type === "standort" ? <Related data={data} standort={standort} /> : null}
     </aside>
   );
 }
 
 function Rows({ selected, item, data }) {
-  const standort = item.standort_id ? data.standorte.find((s) => s.id === item.standort_id) : null;
   const kanzel = item.kanzel_id ? data.kanzeln.find((k) => k.id === item.kanzel_id) : null;
-  if (selected.type === "abschuss") return <dl><dt>Datum</dt><dd>{item.datum}</dd><dt>Schütze</dt><dd>{item.schuetz_name}</dd><dt>Standort</dt><dd>{standort?.name || "-"}</dd><dt>Kanzel</dt><dd>{kanzel?.name || "-"}</dd></dl>;
-  if (selected.type === "kanzel") return <dl><dt>Standort</dt><dd>{standort?.name || "-"}</dd></dl>;
-  return <dl><dt>Position</dt><dd>{Number(item.position_lat).toFixed(5)}, {Number(item.position_lng).toFixed(5)}</dd></dl>;
-}
-
-function Related({ data, standort }) {
-  const kanzeln = data.kanzeln.filter((k) => k.standort_id === standort.id);
-  const abschuesse = data.abschuesse.filter((a) => a.standort_id === standort.id);
-  return <div className="related">
-    {kanzeln.length ? <><h3>Kanzeln</h3>{kanzeln.map((k) => <span key={k.id}>{k.name}</span>)}</> : null}
-    {abschuesse.length ? <><h3>Abschüsse</h3>{abschuesse.map((a) => <span key={a.id}>{a.datum} · {a.wildart}</span>)}</> : null}
-  </div>;
+  const origin = selected.type === "abschuss" ? shotOrigin(item, data) : null;
+  if (selected.type === "abschuss") {
+    return (
+      <dl>
+        <dt>Datum</dt><dd>{item.datum}</dd>
+        <dt>Schütze</dt><dd>{item.schuetz_name}</dd>
+        <dt>Kanzel</dt><dd>{kanzel?.name || "-"}</dd>
+        <dt>Schuss</dt><dd>{origin ? `${origin.lat.toFixed(5)}, ${origin.lng.toFixed(5)}` : "-"}</dd>
+      </dl>
+    );
+  }
+  return <dl><dt>Typ</dt><dd>{item.typ || "-"}</dd><dt>Position</dt><dd>{Number(item.position_lat).toFixed(5)}, {Number(item.position_lng).toFixed(5)}</dd></dl>;
 }
 
 function ListScreen({ data, tab, setTab, filters, setFilters, setView, setSelected }) {
@@ -377,7 +421,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, setSelect
   });
   return (
     <main className="list-screen">
-      <nav className="tabs wide">{["standorte", "kanzeln", "abschuesse"].map((t) => <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
+      <nav className="tabs wide">{["kanzeln", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
       <div className="filters">
         <input placeholder="Suchen" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} />
         <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="alle">Alle</option><option value="aktiv">Aktiv</option><option value="archiviert">Archiviert</option></select>
@@ -385,19 +429,11 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, setSelect
         <input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
       </div>
       <section className="rows">{items.map((item) => <article key={item.id}>
-        <div><strong>{item.name || item.wildart}</strong><span>{rowMeta(tab, item, data)}</span></div>
-        <button onClick={() => { setSelected({ type: singular(tab), id: item.id }); setView("map"); }}>Karte</button>
+        <div><strong>{item.name || item.wildart}</strong><span>{rowMeta(tab, item)}</span></div>
+        <button type="button" onClick={() => { setSelected({ type: singular(tab), id: item.id }); setView("map"); }}>Karte</button>
       </article>)}</section>
     </main>
   );
-}
-
-function SelectStandort({ data, value, onChange, required }) {
-  return <select required={required} value={value || ""} onChange={(e) => onChange(e.target.value)}><option value="">Keiner</option>{data.standorte.filter((s) => s.status !== "archiviert").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>;
-}
-
-function SelectKanzel({ data, standortId, value, onChange }) {
-  return <select value={value || ""} onChange={(e) => onChange(e.target.value)}><option value="">Keine</option>{data.kanzeln.filter((k) => !standortId || k.standort_id === standortId).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}</select>;
 }
 
 function useVisibleData(data) {
@@ -406,24 +442,47 @@ function useVisibleData(data) {
     const active = (item) => archived || item.status !== "archiviert";
     const date = (item) => (!data.settings.map_date_filter_from || item.datum >= data.settings.map_date_filter_from) && (!data.settings.map_date_filter_to || item.datum <= data.settings.map_date_filter_to);
     return {
-      standorte: data.standorte.filter(active),
       kanzeln: data.kanzeln.filter(active),
       abschuesse: data.abschuesse.filter((a) => active(a) && date(a)),
     };
   }, [data]);
 }
 
+function shotOrigin(abschuss, data) {
+  if (abschuss.schuss_kanzel_id) {
+    const kanzel = data.kanzeln.find((item) => item.id === abschuss.schuss_kanzel_id);
+    if (kanzel) return { lat: Number(kanzel.position_lat), lng: Number(kanzel.position_lng) };
+  }
+  if (abschuss.schuss_lat !== null && abschuss.schuss_lng !== null && abschuss.schuss_lat !== undefined && abschuss.schuss_lng !== undefined) {
+    return { lat: Number(abschuss.schuss_lat), lng: Number(abschuss.schuss_lng) };
+  }
+  return null;
+}
+
 function findObject(data, selected) {
   if (!data || !selected) return null;
   return data[apiName(selected.type)].find((item) => item.id === selected.id) || null;
 }
-function apiName(type) { return type === "standort" ? "standorte" : type === "kanzel" ? "kanzeln" : "abschuesse"; }
-function singular(tab) { return tab === "standorte" ? "standort" : tab === "kanzeln" ? "kanzel" : "abschuss"; }
-function label(tab) { return tab === "standorte" ? "Standorte" : tab === "kanzeln" ? "Kanzeln" : "Abschüsse"; }
-function rowMeta(tab, item, data) {
-  if (tab === "abschuesse") return `${item.datum} · ${item.schuetz_name}`;
-  if (tab === "kanzeln") return data.standorte.find((s) => s.id === item.standort_id)?.name || "-";
-  return `${Number(item.position_lat).toFixed(5)}, ${Number(item.position_lng).toFixed(5)}`;
+
+function apiName(type) {
+  return type === "kanzel" ? "kanzeln" : "abschuesse";
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+function singular(tab) {
+  return tab === "kanzeln" ? "kanzel" : "abschuss";
+}
+
+function label(tab) {
+  return tab === "kanzeln" ? "Kanzeln" : "Abschüsse";
+}
+
+function rowMeta(tab, item) {
+  if (tab === "abschuesse") return `${item.datum} · ${item.schuetz_name}`;
+  return item.typ || `${Number(item.position_lat).toFixed(5)}, ${Number(item.position_lng).toFixed(5)}`;
+}
+
+function Root() {
+  return <App />;
+}
+
+createRoot(document.getElementById("root")).render(<Root />);
