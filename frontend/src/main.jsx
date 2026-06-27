@@ -222,6 +222,11 @@ function MapTools({ setSelfPos }) {
     L.DomEvent.disableClickPropagation(ref.current);
     L.DomEvent.disableScrollPropagation(ref.current);
   }, []);
+  useEffect(() => {
+    if (!error) return undefined;
+    const timer = setTimeout(() => setError(""), 4500);
+    return () => clearTimeout(timer);
+  }, [error]);
   const locate = () => {
     setError("");
     if (!navigator.geolocation) {
@@ -253,7 +258,7 @@ function MapTools({ setSelfPos }) {
       <button type="button" onClick={() => map.zoomOut()} title="Verkleinern">-</button>
       <button type="button" onClick={locate} title="Position" className={locating ? "loading" : ""}><LocateFixed size={17} /></button>
       {locating ? <span className="map-status">Sucht</span> : null}
-      {error ? <span className="map-status error-status">{error}</span> : null}
+      {error ? <button type="button" className="map-status error-status" onClick={() => setError("")}>{error}</button> : null}
     </div>
   );
 }

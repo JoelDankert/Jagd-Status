@@ -103,6 +103,8 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .map-tools button.loading { color: var(--green); }
 .map-status {
+  width: auto;
+  min-height: auto !important;
   max-width: 180px;
   padding: 6px 8px;
   border-radius: 7px;
