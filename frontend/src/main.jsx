@@ -20,21 +20,6 @@ const api = async (path, options = {}) => {
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
-const shift = (days) => {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-};
-const monthStart = () => {
-  const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
-};
-const seasonStart = () => {
-  const d = new Date();
-  return `${d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1}-04-01`;
-};
-
 const WILDARTEN = [
   "Reh",
   "Bock",
@@ -50,6 +35,12 @@ const WILDARTEN = [
   "Taube",
   "Sonstiges",
 ];
+
+function geschlechtValue(value) {
+  if (value === "m") return "männlich";
+  if (value === "w") return "weiblich";
+  return value || "";
+}
 
 function markerLetter(value, fallback) {
   const first = String(value || "").trim().match(/[\p{L}\p{N}]/u)?.[0];
@@ -119,8 +110,8 @@ function App() {
           <button className={view === "map" ? "active" : ""} onClick={() => setView("map")}><MapIcon size={17} />Karte</button>
           <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}><List size={17} />Liste</button>
         </nav>
-        <button className="icon-button" onClick={() => setSettingsOpen((v) => !v)} title="Settings"><Settings size={18} /></button>
-        <button className="quiet" onClick={async () => { await api("/api/logout", { method: "POST" }); setData(null); }}>Logout</button>
+        <button className="icon-button" onClick={() => setSettingsOpen((v) => !v)} title="Einstellungen"><Settings size={18} /></button>
+        <button className="quiet" onClick={async () => { await api("/api/logout", { method: "POST" }); setData(null); }}>Abmelden</button>
       </header>
 
       {view === "map" ? (
@@ -141,7 +132,7 @@ function App() {
       {settingsOpen && !originPick && <SettingsPanel data={data} load={load} />}
       {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={setForm} />}
       {createAt && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={(next) => { setCreateAt(null); setForm(next); }} />}
-      {form && <ObjectForm data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
+      {form && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
       {originPick && <div className="pick-hint">Schussursprung wählen</div>}
     </div>
   );
@@ -254,10 +245,6 @@ function MapTools({ setSelfPos }) {
       setError("Position nicht verfügbar");
       return;
     }
-    if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-      setError("Browser blockiert Position über HTTP");
-      return;
-    }
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (p) => {
@@ -267,7 +254,8 @@ function MapTools({ setSelfPos }) {
         setLocating(false);
       },
       (err) => {
-        setError(err.code === 1 ? "Position erlaubt?" : "Position nicht gefunden");
+        const secureError = /secure|https|http/i.test(err.message || "");
+        setError(secureError ? "Browser blockiert Position über HTTP" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
         setLocating(false);
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
@@ -278,7 +266,7 @@ function MapTools({ setSelfPos }) {
       <button type="button" onClick={() => map.zoomIn()} title="Vergrößern">+</button>
       <button type="button" onClick={() => map.zoomOut()} title="Verkleinern">-</button>
       <button type="button" onClick={locate} title="Position" className={locating ? "loading" : ""}><LocateFixed size={17} /></button>
-      {locating ? <span className="map-status">Sucht</span> : null}
+      {locating ? <span className="map-status">Sucht...</span> : null}
       {error ? <button type="button" className="map-status error-status" onClick={() => setError("")}>{error}</button> : null}
     </div>
   );
@@ -315,33 +303,17 @@ function SettingsPanel({ data, load }) {
     await api("/api/settings", { method: "POST", body: { [key]: value } });
     await load();
   };
-  const range = async (kind) => {
-    const body = kind === "today" ? { map_date_filter_from: today(), map_date_filter_to: today() }
-      : kind === "week" ? { map_date_filter_from: shift(-6), map_date_filter_to: today() }
-      : kind === "month" ? { map_date_filter_from: monthStart(), map_date_filter_to: today() }
-      : kind === "season" ? { map_date_filter_from: seasonStart(), map_date_filter_to: today() }
-      : { map_date_filter_from: "", map_date_filter_to: "" };
-    await api("/api/settings", { method: "POST", body });
-    await load();
-  };
   const s = data.settings;
   return (
     <aside className="settings-panel">
-      <h2><Layers size={18} /> Settings</h2>
+      <h2><Layers size={18} /> Einstellungen</h2>
       {[
-        ["show_self_location", "Position"],
+        ["show_self_location", "Eigene Position"],
         ["show_kanzeln", "Kanzeln"],
         ["show_abschuesse", "Abschüsse"],
-        ["show_archived", "Archiv"],
+        ["show_archived", "Archivierte"],
         ["show_reviergrenze", "Grenze"],
       ].map(([key, label]) => <label className="check" key={key}><input type="checkbox" checked={Boolean(Number(s[key]))} onChange={(e) => save(key, e.target.checked)} />{label}</label>)}
-      <div className="chips">
-        <button type="button" onClick={() => range("today")}>Heute</button>
-        <button type="button" onClick={() => range("week")}>7 Tage</button>
-        <button type="button" onClick={() => range("month")}>Monat</button>
-        <button type="button" onClick={() => range("season")}>Saison</button>
-        <button type="button" onClick={() => range("all")}>Alle</button>
-      </div>
       <div className="two">
         <label>Von<input type="date" value={s.map_date_filter_from || ""} onChange={(e) => save("map_date_filter_from", e.target.value)} /></label>
         <label>Bis<input type="date" value={s.map_date_filter_to || ""} onChange={(e) => save("map_date_filter_to", e.target.value)} /></label>
@@ -374,7 +346,7 @@ function initialFormValues(form) {
   return {
     datum: item.datum || today(),
     wildart: item.wildart || "",
-    geschlecht: item.geschlecht || "",
+    geschlecht: geschlechtValue(item.geschlecht),
     schuetz_name: item.schuetz_name || "",
     gewicht_kg: item.gewicht_kg ?? "",
     kanzel_id: item.kanzel_id || "",
@@ -446,17 +418,17 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
             <label>Datum<input required type="date" value={values.datum} onChange={(e) => set("datum", e.target.value)} /></label>
             <div className="two">
               <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((wildart) => <option key={wildart} value={wildart}>{wildart}</option>)}</select></label>
-              <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">Offen</option><option value="m">m</option><option value="w">w</option></select></label>
+              <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">Offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
             </div>
             <div className="two">
               <label>Schütze<input required list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
-              <label>Gewicht kg<input type="number" min="0" step="0.1" inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
+              <label>Gewicht (kg)<input type="number" min="0" step="0.1" inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
             </div>
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
             <label>Kanzel<select value={values.kanzel_id} onChange={(e) => set("kanzel_id", e.target.value)}><option value="">Keine</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
             <div className="origin-row">
               <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung wählen</button>
-              <span>{originLabel || "optional"}</span>
+              <span>{originLabel || "frei"}</span>
             </div>
             <label>Notiz<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
           </>
@@ -501,7 +473,7 @@ function Rows({ selected, item, data }) {
       <dl>
         <dt>Datum</dt><dd>{item.datum}</dd>
         <dt>Wildart</dt><dd>{item.wildart}</dd>
-        <dt>Geschlecht</dt><dd>{item.geschlecht || "-"}</dd>
+        <dt>Geschlecht</dt><dd>{geschlechtValue(item.geschlecht) || "-"}</dd>
         <dt>Schütze</dt><dd>{item.schuetz_name}</dd>
         <dt>Gewicht</dt><dd>{item.gewicht_kg !== null && item.gewicht_kg !== undefined ? `${item.gewicht_kg} kg` : "-"}</dd>
         <dt>Kanzel</dt><dd>{kanzel?.name || "-"}</dd>
@@ -568,6 +540,11 @@ function apiName(type) {
   return type === "kanzel" ? "kanzeln" : "abschuesse";
 }
 
+function formKey(form) {
+  const point = form.point ? `${form.point.lat}:${form.point.lng}` : "nopoint";
+  return `${form.mode || "neu"}:${form.type}:${form.item?.id || point}`;
+}
+
 function singular(tab) {
   return tab === "kanzeln" ? "kanzel" : "abschuss";
 }
@@ -577,7 +554,7 @@ function label(tab) {
 }
 
 function rowMeta(tab, item) {
-  if (tab === "abschuesse") return `${item.datum} · ${item.wildart}${item.geschlecht ? ` ${item.geschlecht}` : ""} · ${item.schuetz_name}${item.gewicht_kg !== null && item.gewicht_kg !== undefined ? ` · ${item.gewicht_kg} kg` : ""}`;
+  if (tab === "abschuesse") return `${item.datum} · ${item.wildart}${item.geschlecht ? ` · ${geschlechtValue(item.geschlecht)}` : ""} · ${item.schuetz_name}${item.gewicht_kg !== null && item.gewicht_kg !== undefined ? ` · ${item.gewicht_kg} kg` : ""}`;
   return item.typ || `${Number(item.position_lat).toFixed(5)}, ${Number(item.position_lng).toFixed(5)}`;
 }
 
