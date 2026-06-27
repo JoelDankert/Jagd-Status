@@ -118,7 +118,7 @@ function App() {
       )}
 
       {settingsOpen && !originPick && <SettingsPanel data={data} load={load} />}
-      {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} />}
+      {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={setForm} />}
       {createAt && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={(next) => { setCreateAt(null); setForm(next); }} />}
       {form && <ObjectForm data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
       {originPick && <div className="pick-hint">Schussursprung wählen</div>}
@@ -341,21 +341,45 @@ function CreateWindow({ point, close, openForm }) {
   );
 }
 
+function initialFormValues(form) {
+  const item = form.item || {};
+  if (form.type === "kanzel") {
+    return {
+      name: item.name || "",
+      typ: item.typ || "",
+      notiz: item.notiz || "",
+    };
+  }
+  return {
+    datum: item.datum || today(),
+    wildart: item.wildart || "",
+    schuetz_name: item.schuetz_name || "",
+    gewicht_kg: item.gewicht_kg ?? "",
+    kanzel_id: item.kanzel_id || "",
+    schuss_lat: item.schuss_lat ?? "",
+    schuss_lng: item.schuss_lng ?? "",
+    schuss_kanzel_id: item.schuss_kanzel_id || "",
+    notiz: item.notiz || "",
+  };
+}
+
+function initialOriginLabel(item) {
+  if (!item) return "";
+  if (item.schuss_kanzel_id) return "Kanzel gewählt";
+  if (item.schuss_lat !== null && item.schuss_lng !== null && item.schuss_lat !== undefined && item.schuss_lng !== undefined) return "Punkt gewählt";
+  return "";
+}
+
 function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const formId = useRef(form.id || localId()).current;
-  const [originLabel, setOriginLabel] = useState("");
-  const [values, setValues] = useState({
-    datum: today(),
-    kanzel_id: "",
-    schuss_lat: "",
-    schuss_lng: "",
-    schuss_kanzel_id: "",
-  });
+  const [originLabel, setOriginLabel] = useState(() => initialOriginLabel(form.item));
+  const [values, setValues] = useState(() => initialFormValues(form));
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const origin = originPick?.formId === formId ? originPick.origin : null;
   const picking = originPick?.formId === formId && !originPick.origin;
+  const editing = form.mode === "edit";
 
   useEffect(() => {
     if (!origin) return;
@@ -376,7 +400,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     try {
       const body = { ...values, position_lat: form.point.lat, position_lng: form.point.lng };
       const path = form.type === "kanzel" ? "/api/kanzeln" : "/api/abschuesse";
-      await api(path, { method: "POST", body });
+      await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
       await load();
     } catch (err) {
       setError(err.message);
@@ -388,27 +412,30 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" onSubmit={submit}>
-        <header><h2>{form.type === "kanzel" ? "Kanzel" : "Abschuss"}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {form.type === "kanzel" ? (
           <>
-            <label>Name<input required onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Typ<input onChange={(e) => set("typ", e.target.value)} /></label>
-            <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
+            <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
+            <label>Typ<input value={values.typ} onChange={(e) => set("typ", e.target.value)} /></label>
+            <label>Notiz<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
           </>
         ) : (
           <>
             <div className="two">
               <label>Datum<input required type="date" value={values.datum} onChange={(e) => set("datum", e.target.value)} /></label>
-              <label>Wildart<input required onChange={(e) => set("wildart", e.target.value)} /></label>
+              <label>Wildart<input required value={values.wildart} onChange={(e) => set("wildart", e.target.value)} /></label>
             </div>
-            <label>Schütze<input required list="schuetzen" onChange={(e) => set("schuetz_name", e.target.value)} /></label>
+            <div className="two">
+              <label>Schütze<input required list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
+              <label>Gewicht kg<input type="number" min="0" step="0.1" inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
+            </div>
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
             <label>Kanzel<select value={values.kanzel_id} onChange={(e) => set("kanzel_id", e.target.value)}><option value="">Keine</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
             <div className="origin-row">
               <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung wählen</button>
               <span>{originLabel || "optional"}</span>
             </div>
-            <label>Notiz<textarea onChange={(e) => set("notiz", e.target.value)} /></label>
+            <label>Notiz<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
           </>
         )}
         <p className="error">{error}</p>
@@ -418,7 +445,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   );
 }
 
-function DetailPanel({ data, selected, item, close, load }) {
+function DetailPanel({ data, selected, item, close, load, openForm }) {
   const archive = async () => {
     await api(`/api/${apiName(selected.type)}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
     await load();
@@ -435,6 +462,7 @@ function DetailPanel({ data, selected, item, close, load }) {
       <Rows selected={selected} item={item} data={data} />
       {item.notiz ? <p>{item.notiz}</p> : null}
       <div className="actions">
+        <button type="button" onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
         <button type="button" onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
         <button type="button" className="danger" onClick={del}><Trash2 size={16} />Löschen</button>
       </div>
@@ -450,6 +478,7 @@ function Rows({ selected, item, data }) {
       <dl>
         <dt>Datum</dt><dd>{item.datum}</dd>
         <dt>Schütze</dt><dd>{item.schuetz_name}</dd>
+        <dt>Gewicht</dt><dd>{item.gewicht_kg !== null && item.gewicht_kg !== undefined ? `${item.gewicht_kg} kg` : "-"}</dd>
         <dt>Kanzel</dt><dd>{kanzel?.name || "-"}</dd>
         <dt>Schuss</dt><dd>{origin ? `${origin.lat.toFixed(5)}, ${origin.lng.toFixed(5)}` : "-"}</dd>
       </dl>
@@ -523,7 +552,7 @@ function label(tab) {
 }
 
 function rowMeta(tab, item) {
-  if (tab === "abschuesse") return `${item.datum} · ${item.schuetz_name}`;
+  if (tab === "abschuesse") return `${item.datum} · ${item.schuetz_name}${item.gewicht_kg !== null && item.gewicht_kg !== undefined ? ` · ${item.gewicht_kg} kg` : ""}`;
   return item.typ || `${Number(item.position_lat).toFixed(5)}, ${Number(item.position_lng).toFixed(5)}`;
 }
 

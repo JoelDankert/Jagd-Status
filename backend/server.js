@@ -96,6 +96,7 @@ function setupDb() {
       datum TEXT NOT NULL,
       wildart TEXT NOT NULL,
       schuetz_name TEXT NOT NULL,
+      gewicht_kg REAL,
       status TEXT NOT NULL DEFAULT 'aktiv',
       notiz TEXT,
       created_at TEXT NOT NULL,
@@ -118,6 +119,14 @@ function setupDb() {
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
     );
   `);
+  ensureColumn("abschuss", "gewicht_kg", "REAL");
+}
+
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 function ensureSettings(revierId) {
@@ -259,8 +268,8 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       INSERT INTO abschuss (
         id, revier_id, kanzel_id, position_lat, position_lng, schuss_lat,
         schuss_lng, schuss_kanzel_id, datum, wildart, schuetz_name,
-        status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        gewicht_kg, status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
@@ -273,6 +282,7 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       datum,
       wildart,
       schuetzName,
+      optionalNum(req.body.gewicht_kg),
       itemStatus(req.body.status),
       optional(req.body.notiz),
       stamp,
@@ -290,7 +300,7 @@ function patch(table, allowed) {
       const values = {};
       for (const key of allowed) {
         if (!(key in req.body)) continue;
-        if (["position_lat", "position_lng", "schuss_lat", "schuss_lng"].includes(key)) values[key] = optionalNum(req.body[key]);
+        if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(key)) values[key] = optionalNum(req.body[key]);
         else if (key === "status") values[key] = itemStatus(req.body[key]);
         else if (key.endsWith("_id") || key === "typ" || key === "notiz") values[key] = optional(req.body[key]);
         else values[key] = clean(req.body[key]);
@@ -317,7 +327,7 @@ function remove(table) {
 }
 
 app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "notiz"]));
-app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "wildart", "schuetz_name", "status", "notiz"]));
+app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "wildart", "schuetz_name", "gewicht_kg", "status", "notiz"]));
 app.delete("/api/kanzeln/:id", requireAuth, remove("kanzel"));
 app.delete("/api/abschuesse/:id", requireAuth, remove("abschuss"));
 
