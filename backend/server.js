@@ -95,6 +95,7 @@ function setupDb() {
       schuss_kanzel_id TEXT,
       datum TEXT NOT NULL,
       wildart TEXT NOT NULL,
+      geschlecht TEXT,
       schuetz_name TEXT NOT NULL,
       gewicht_kg REAL,
       status TEXT NOT NULL DEFAULT 'aktiv',
@@ -120,6 +121,7 @@ function setupDb() {
     );
   `);
   ensureColumn("abschuss", "gewicht_kg", "REAL");
+  ensureColumn("abschuss", "geschlecht", "TEXT");
 }
 
 function ensureColumn(table, column, definition) {
@@ -267,9 +269,9 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
     db.prepare(`
       INSERT INTO abschuss (
         id, revier_id, kanzel_id, position_lat, position_lng, schuss_lat,
-        schuss_lng, schuss_kanzel_id, datum, wildart, schuetz_name,
-        gewicht_kg, status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        schuss_lng, schuss_kanzel_id, datum, wildart, geschlecht,
+        schuetz_name, gewicht_kg, status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
@@ -281,6 +283,7 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       optional(req.body.schuss_kanzel_id),
       datum,
       wildart,
+      optional(req.body.geschlecht),
       schuetzName,
       optionalNum(req.body.gewicht_kg),
       itemStatus(req.body.status),
@@ -327,7 +330,7 @@ function remove(table) {
 }
 
 app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "notiz"]));
-app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "wildart", "schuetz_name", "gewicht_kg", "status", "notiz"]));
+app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "wildart", "geschlecht", "schuetz_name", "gewicht_kg", "status", "notiz"]));
 app.delete("/api/kanzeln/:id", requireAuth, remove("kanzel"));
 app.delete("/api/abschuesse/:id", requireAuth, remove("abschuss"));
 

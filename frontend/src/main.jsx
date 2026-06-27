@@ -35,6 +35,22 @@ const seasonStart = () => {
   return `${d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1}-04-01`;
 };
 
+const WILDARTEN = [
+  "Reh",
+  "Bock",
+  "Schmalreh",
+  "Kitz",
+  "Rotwild",
+  "Damwild",
+  "Schwarzwild",
+  "Fuchs",
+  "Hase",
+  "Ente",
+  "Gans",
+  "Taube",
+  "Sonstiges",
+];
+
 const markerIcon = (type, archived = false) => L.divIcon({
   className: `pin ${type} ${archived ? "is-archived" : ""}`,
   html: `<span>${type === "kanzel" ? "K" : "A"}</span>`,
@@ -353,6 +369,7 @@ function initialFormValues(form) {
   return {
     datum: item.datum || today(),
     wildart: item.wildart || "",
+    geschlecht: item.geschlecht || "",
     schuetz_name: item.schuetz_name || "",
     gewicht_kg: item.gewicht_kg ?? "",
     kanzel_id: item.kanzel_id || "",
@@ -421,9 +438,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
           </>
         ) : (
           <>
+            <label>Datum<input required type="date" value={values.datum} onChange={(e) => set("datum", e.target.value)} /></label>
             <div className="two">
-              <label>Datum<input required type="date" value={values.datum} onChange={(e) => set("datum", e.target.value)} /></label>
-              <label>Wildart<input required value={values.wildart} onChange={(e) => set("wildart", e.target.value)} /></label>
+              <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((wildart) => <option key={wildart} value={wildart}>{wildart}</option>)}</select></label>
+              <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">Offen</option><option value="m">m</option><option value="w">w</option></select></label>
             </div>
             <div className="two">
               <label>Schütze<input required list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
@@ -477,6 +495,8 @@ function Rows({ selected, item, data }) {
     return (
       <dl>
         <dt>Datum</dt><dd>{item.datum}</dd>
+        <dt>Wildart</dt><dd>{item.wildart}</dd>
+        <dt>Geschlecht</dt><dd>{item.geschlecht || "-"}</dd>
         <dt>Schütze</dt><dd>{item.schuetz_name}</dd>
         <dt>Gewicht</dt><dd>{item.gewicht_kg !== null && item.gewicht_kg !== undefined ? `${item.gewicht_kg} kg` : "-"}</dd>
         <dt>Kanzel</dt><dd>{kanzel?.name || "-"}</dd>
@@ -552,7 +572,7 @@ function label(tab) {
 }
 
 function rowMeta(tab, item) {
-  if (tab === "abschuesse") return `${item.datum} · ${item.schuetz_name}${item.gewicht_kg !== null && item.gewicht_kg !== undefined ? ` · ${item.gewicht_kg} kg` : ""}`;
+  if (tab === "abschuesse") return `${item.datum} · ${item.wildart}${item.geschlecht ? ` ${item.geschlecht}` : ""} · ${item.schuetz_name}${item.gewicht_kg !== null && item.gewicht_kg !== undefined ? ` · ${item.gewicht_kg} kg` : ""}`;
   return item.typ || `${Number(item.position_lat).toFixed(5)}, ${Number(item.position_lng).toFixed(5)}`;
 }
 
