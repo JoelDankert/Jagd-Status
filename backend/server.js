@@ -43,15 +43,20 @@ function optional(value) {
   return valueText || null;
 }
 
+function decimalText(value) {
+  const valueText = clean(value).replace(",", ".");
+  return valueText || null;
+}
+
 function num(value, label) {
-  const parsed = Number(value);
+  const parsed = Number(String(value ?? "").replace(",", "."));
   if (!Number.isFinite(parsed)) throw new Error(`${label} fehlt`);
   return parsed;
 }
 
 function optionalNum(value) {
   if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
+  const parsed = Number(String(value).replace(",", "."));
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -94,10 +99,16 @@ function setupDb() {
       schuss_lng REAL,
       schuss_kanzel_id TEXT,
       datum TEXT NOT NULL,
+      uhrzeit TEXT,
       wildart TEXT NOT NULL,
       geschlecht TEXT,
+      alter_text TEXT,
       schuetz_name TEXT NOT NULL,
       gewicht_kg REAL,
+      wetter TEXT,
+      wind TEXT,
+      wind_richtung TEXT,
+      wind_speed_kmh REAL,
       status TEXT NOT NULL DEFAULT 'aktiv',
       notiz TEXT,
       created_at TEXT NOT NULL,
@@ -122,6 +133,12 @@ function setupDb() {
   `);
   ensureColumn("abschuss", "gewicht_kg", "REAL");
   ensureColumn("abschuss", "geschlecht", "TEXT");
+  ensureColumn("abschuss", "alter_text", "TEXT");
+  ensureColumn("abschuss", "wetter", "TEXT");
+  ensureColumn("abschuss", "wind", "TEXT");
+  ensureColumn("abschuss", "uhrzeit", "TEXT");
+  ensureColumn("abschuss", "wind_richtung", "TEXT");
+  ensureColumn("abschuss", "wind_speed_kmh", "REAL");
 }
 
 function ensureColumn(table, column, definition) {
@@ -161,20 +178,28 @@ app.post("/api/login", (req, res) => {
     const name = clean(req.body.name);
     const passwort = clean(req.body.passwort);
     if (!name || !passwort) throw new Error("Login fehlt");
+    if (name !== "Durchhausen") return res.status(401).json({ error: "Login falsch" });
 
     let revier = db.prepare("SELECT * FROM revier WHERE name = ?").get(name);
     if (!revier) {
-      const count = db.prepare("SELECT COUNT(*) AS count FROM revier").get().count;
-      if (count > 0) return res.status(401).json({ error: "Login falsch" });
+      const existing = db.prepare("SELECT * FROM revier ORDER BY created_at LIMIT 1").get();
       const stamp = now();
-      const revierId = id();
-      db.prepare("INSERT INTO revier (id, name, passwort_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-        .run(revierId, name, bcrypt.hashSync(passwort, 12), stamp, stamp);
-      ensureSettings(revierId);
-      revier = db.prepare("SELECT * FROM revier WHERE id = ?").get(revierId);
-    } else if (!bcrypt.compareSync(passwort, revier.passwort_hash)) {
+      if (existing) {
+        db.prepare("UPDATE revier SET name = ?, updated_at = ? WHERE id = ?").run("Durchhausen", stamp, existing.id);
+        revier = db.prepare("SELECT * FROM revier WHERE id = ?").get(existing.id);
+      } else {
+        const revierId = id();
+        db.prepare("INSERT INTO revier (id, name, passwort_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+          .run(revierId, "Durchhausen", bcrypt.hashSync(passwort, 12), stamp, stamp);
+        ensureSettings(revierId);
+        revier = db.prepare("SELECT * FROM revier WHERE id = ?").get(revierId);
+      }
+    }
+
+    if (!bcrypt.compareSync(passwort, revier.passwort_hash)) {
       return res.status(401).json({ error: "Login falsch" });
     }
+    ensureSettings(revier.id);
 
     const token = crypto.randomBytes(32).toString("base64url");
     sessions.set(token, revier.id);
@@ -233,6 +258,8 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
   try {
     const name = clean(req.body.name);
     if (!name) throw new Error("Name fehlt");
+    const lat = num(req.body.position_lat, "Position");
+    const lng = num(req.body.position_lng, "Position");
     const stamp = now();
     const itemId = id();
     db.prepare(`
@@ -245,8 +272,8 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
       req.revierId,
       name,
       optional(req.body.typ),
-      num(req.body.position_lat, "Position"),
-      num(req.body.position_lng, "Position"),
+      lat,
+      lng,
       itemStatus(req.body.status),
       optional(req.body.notiz),
       stamp,
@@ -260,32 +287,41 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
 
 app.post("/api/abschuesse", requireAuth, (req, res) => {
   try {
-    const datum = clean(req.body.datum);
+    const datum = clean(req.body.datum) || now().slice(0, 10);
+    const uhrzeit = clean(req.body.uhrzeit);
     const wildart = clean(req.body.wildart);
     const schuetzName = clean(req.body.schuetz_name);
-    if (!datum || !wildart || !schuetzName) throw new Error("Pflichtfelder fehlen");
+    if (!wildart) throw new Error("Wildart fehlt");
+    const lat = num(req.body.position_lat, "Position");
+    const lng = num(req.body.position_lng, "Position");
+    const shotLat = optionalNum(req.body.schuss_lat);
+    const shotLng = optionalNum(req.body.schuss_lng);
     const stamp = now();
     const itemId = id();
     db.prepare(`
       INSERT INTO abschuss (
         id, revier_id, kanzel_id, position_lat, position_lng, schuss_lat,
-        schuss_lng, schuss_kanzel_id, datum, wildart, geschlecht,
-        schuetz_name, gewicht_kg, status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        schuss_lng, schuss_kanzel_id, datum, uhrzeit, wildart, geschlecht, alter_text,
+        schuetz_name, gewicht_kg, wetter, wind, status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
       optional(req.body.kanzel_id),
-      num(req.body.position_lat, "Position"),
-      num(req.body.position_lng, "Position"),
-      optionalNum(req.body.schuss_lat),
-      optionalNum(req.body.schuss_lng),
+      lat,
+      lng,
+      shotLat,
+      shotLng,
       optional(req.body.schuss_kanzel_id),
       datum,
+      optional(uhrzeit),
       wildart,
       optional(req.body.geschlecht),
+      decimalText(req.body.alter_text),
       schuetzName,
       optionalNum(req.body.gewicht_kg),
+      optional(req.body.wetter),
+      optional(req.body.wind),
       itemStatus(req.body.status),
       optional(req.body.notiz),
       stamp,
@@ -305,6 +341,7 @@ function patch(table, allowed) {
         if (!(key in req.body)) continue;
         if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(key)) values[key] = optionalNum(req.body[key]);
         else if (key === "status") values[key] = itemStatus(req.body[key]);
+        else if (key === "alter_text") values[key] = decimalText(req.body[key]);
         else if (key.endsWith("_id") || key === "typ" || key === "notiz") values[key] = optional(req.body[key]);
         else values[key] = clean(req.body[key]);
       }
@@ -330,7 +367,7 @@ function remove(table) {
 }
 
 app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "notiz"]));
-app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "wildart", "geschlecht", "schuetz_name", "gewicht_kg", "status", "notiz"]));
+app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text", "schuetz_name", "gewicht_kg", "wetter", "wind", "status", "notiz"]));
 app.delete("/api/kanzeln/:id", requireAuth, remove("kanzel"));
 app.delete("/api/abschuesse/:id", requireAuth, remove("abschuss"));
 
