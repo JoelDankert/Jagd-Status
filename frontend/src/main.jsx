@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Layers, List, LocateFixed, Map as MapIcon, Settings, Trash2, X } from "lucide-react";
@@ -20,7 +21,11 @@ const api = async (path, options = {}) => {
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
+
 const DURCHHAUSEN_CENTER = [48.0392, 8.6747];
+const IMAGE_MAX_ZOOM = 8;
+const MAX_PULSE_BPM = 150;
+const MIN_PULSE_BPM = 20;
 
 function currentTime() {
   const date = new Date();
@@ -28,12 +33,19 @@ function currentTime() {
 }
 
 function dateTimeValue(datum, uhrzeit) {
-  return `${datum || today()}T${uhrzeit || "00:00"}`;
+  return uhrzeit ? `${datum || today()}T${uhrzeit}` : "";
 }
 
 function splitDateTime(value) {
+  if (!value) return { datum: today(), uhrzeit: "" };
   const [datum, uhrzeit = ""] = String(value || "").split("T");
   return { datum: datum || today(), uhrzeit };
+}
+
+function hourKey(datum, uhrzeit) {
+  const [hour = "00", minute = "0"] = String(uhrzeit || "00:00").split(":");
+  const rounded = Math.min(23, Math.max(0, Number(hour) + (Number(minute) >= 30 ? 1 : 0)));
+  return `${datum || today()}T${String(rounded).padStart(2, "0")}:00`;
 }
 
 const WILDARTEN = [
@@ -99,28 +111,70 @@ function formatWind(item) {
   return [item?.wind_richtung, speed].filter(Boolean).join(", ");
 }
 
-async function autofillWeather(point, signal) {
-  const lat = Number(point?.lat);
-  const lng = Number(point?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  const params = new URLSearchParams({
-    latitude: String(lat),
-    longitude: String(lng),
-    current: "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m",
-    wind_speed_unit: "kmh",
-    timezone: "auto",
+function readImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const maxSize = 1280;
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext("2d");
+        if (!context) return resolve(String(reader.result || ""));
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      image.onerror = () => resolve(String(reader.result || ""));
+      image.src = String(reader.result || "");
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
-  const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, { signal });
-  if (!response.ok) return null;
-  const current = (await response.json()).current || {};
-  const temp = Number.isFinite(Number(current.temperature_2m)) ? `${Math.round(Number(current.temperature_2m))}°C` : "";
-  const weather = WETTER_CODES[current.weather_code] || "";
-  const windSpeed = Number.isFinite(Number(current.wind_speed_10m)) ? `${Math.round(Number(current.wind_speed_10m))}km/h` : "";
-  const windDir = windDirection(current.wind_direction_10m);
+}
+
+function weatherFromHourly(hourly, datum, uhrzeit) {
+  const times = hourly?.time || [];
+  if (!times.length) return null;
+  const wanted = hourKey(datum, uhrzeit);
+  let index = times.indexOf(wanted);
+  if (index < 0) {
+    index = times.reduce((best, time, current) => (
+      Math.abs(new Date(time) - new Date(wanted)) < Math.abs(new Date(times[best]) - new Date(wanted)) ? current : best
+    ), 0);
+  }
+  const temp = Number.isFinite(Number(hourly.temperature_2m?.[index])) ? `${Math.round(Number(hourly.temperature_2m[index]))}°C` : "";
+  const weather = WETTER_CODES[hourly.weather_code?.[index]] || "";
+  const windSpeed = Number.isFinite(Number(hourly.wind_speed_10m?.[index])) ? `${Math.round(Number(hourly.wind_speed_10m[index]))}km/h` : "";
+  const windDir = windDirection(hourly.wind_direction_10m?.[index]);
   return {
     wetter: [temp, weather].filter(Boolean).join(", "),
     wind: [windDir, windSpeed].filter(Boolean).join(", "),
   };
+}
+
+async function autofillWeather(point, datum = today(), uhrzeit = currentTime()) {
+  const lat = Number(point?.lat);
+  const lng = Number(point?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const selectedDate = datum || today();
+  const isPast = selectedDate < today();
+  const endpoint = isPast ? "https://archive-api.open-meteo.com/v1/archive" : "https://api.open-meteo.com/v1/forecast";
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lng),
+    start_date: selectedDate,
+    end_date: selectedDate,
+    hourly: "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m",
+    wind_speed_unit: "kmh",
+    timezone: "auto",
+  });
+  const response = await fetch(`${endpoint}?${params}`);
+  if (!response.ok) return null;
+  return weatherFromHourly((await response.json()).hourly, selectedDate, uhrzeit);
 }
 
 function geschlechtValue(value) {
@@ -130,15 +184,51 @@ function geschlechtValue(value) {
 }
 
 function markerLetter(value, fallback) {
-  const first = String(value || "").trim().match(/[\p{L}\p{N}]/u)?.[0];
-  return (first || fallback).toLocaleUpperCase("de-DE");
+  const letters = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.match(/[\p{L}\p{N}]/u)?.[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("");
+  return (letters || fallback).toLocaleUpperCase("de-DE");
 }
 
-const markerIcon = (type, item = null, archived = false) => {
+function shotPulseTiming(item) {
+  if (!item || item.status === "archiviert") return null;
+  const date = String(item.datum || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const time = /^\d{2}:\d{2}$/.test(String(item.uhrzeit || "")) ? item.uhrzeit : "18:00";
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = String(time).split(":").map(Number);
+  const shotTime = new Date(year, month - 1, day, hour, minute).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const age = Math.max(0, Date.now() - shotTime);
+  if (age > dayMs) return null;
+  const progress = age / dayMs;
+  const bpm = MIN_PULSE_BPM + (MAX_PULSE_BPM - MIN_PULSE_BPM) * Math.pow(1 - progress, 1.25);
+  const beatMs = Math.round(60000 / bpm);
+  return {
+    cycleMs: beatMs + 180,
+    lifeMs: 1040,
+  };
+}
+
+const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const size = archived ? 18 : 25;
+  const pulseName = pulse ? `shot-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
+  const pulseCount = 8;
+  const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
+  const pulseEnd = pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
+  const pulsePeak = pulse ? Math.min(6, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
+  const pulseStyle = pulse ? `<style>@keyframes ${pulseName}{0%{opacity:0;transform:scale(.9)}${pulsePeak}%{opacity:.96;transform:scale(.92)}${pulseEnd}%{opacity:0;transform:scale(2.05)}100%{opacity:0;transform:scale(2.05)}}</style>` : "";
+  const pulseHtml = pulse ? `${pulseStyle}${Array.from({ length: pulseCount }, (_, index) => {
+    const start = index * pulse.cycleMs;
+    return `<i class="pin-pulse" style="animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms"></i>`;
+  }).join("")}` : "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: `<span>${type === "kanzel" ? markerLetter(item?.name, "K") : markerLetter(item?.wildart, "A")}</span>`,
+    html: `${pulseHtml}<span>${type === "kanzel" ? markerLetter(item?.name, "K") : markerLetter(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -297,9 +387,13 @@ function Login({ error, onLogin }) {
   return (
     <main className="login">
       <form onSubmit={(e) => { e.preventDefault(); onLogin({ name, passwort }); }}>
-        <h1>Jagd</h1>
-        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" /></label>
-        <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" /></label>
+        <div className="login-head">
+          <span className="login-badge">J</span>
+          <h1>Jagd</h1>
+          <p>Revierverwaltung</p>
+        </div>
+        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" /></label>
+        <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" /></label>
         <button className="primary" type="submit">Anmelden</button>
         <p className="error">{error}</p>
       </form>
@@ -312,8 +406,8 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const center = markerCenter([...visible.kanzeln, ...visible.abschuesse]);
   return (
     <main className="map-shell">
-      <MapContainer center={center} zoom={14} zoomControl={false} className="map">
-        <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <MapContainer center={center} zoom={14} zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} className="map">
+        <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
@@ -336,7 +430,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
           <Marker
             key={abschuss.id}
             position={[abschuss.position_lat, abschuss.position_lng]}
-            icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert")}
+            icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss))}
             eventHandlers={{ click: () => openSelection({ type: "abschuss", id: abschuss.id }) }}
           />
         )) : null}
@@ -430,7 +524,7 @@ function ShotLine({ abschuss, data }) {
   const origin = shotOrigin(abschuss, data);
   if (!origin) return null;
   const target = pointOf(abschuss);
-  return <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 0.78, dashArray: "7 7", lineCap: "round" }} />;
+  return <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
 }
 
 function PickTarget({ originPick }) {
@@ -439,7 +533,7 @@ function PickTarget({ originPick }) {
   return (
     <>
       <Marker position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
-      {origin ? <Polyline positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 0.9, dashArray: "7 7", lineCap: "round" }} /> : null}
+      {origin ? <Polyline positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
     </>
   );
 }
@@ -454,9 +548,17 @@ function FlyToSelection({ data, selected }) {
 }
 
 function SettingsPanel({ data, load, close }) {
+  const [pending, setPending] = useState("");
   const save = async (key, value) => {
-    await api("/api/settings", { method: "POST", body: { [key]: value } });
-    await load();
+    setPending(key);
+    try {
+      await api("/api/settings", { method: "POST", body: { [key]: value } });
+      await load();
+    } catch {
+      await load().catch(() => {});
+    } finally {
+      setPending("");
+    }
   };
   const s = data.settings;
   const clearFrom = useLongPressClear(() => save("map_date_filter_from", ""));
@@ -470,10 +572,10 @@ function SettingsPanel({ data, load, close }) {
           ["show_kanzeln", "Kanzeln"],
           ["show_abschuesse", "Abschüsse"],
           ["show_archived", "Archivierte"],
-        ].map(([key, label]) => <label className="check" key={key}><input type="checkbox" checked={Boolean(Number(s[key]))} onChange={(e) => save(key, e.target.checked)} />{label}</label>)}
+        ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={pending === key} checked={Boolean(Number(s[key]))} onChange={(e) => save(key, e.target.checked)} />{label}{pending === key ? <span className="mini-loader" /> : null}</label>)}
         <div className="two">
-          <label>Von<input type="date" value={s.map_date_filter_from || ""} onChange={(e) => save("map_date_filter_from", e.target.value)} {...clearFrom} /></label>
-          <label>Bis<input type="date" value={s.map_date_filter_to || ""} onChange={(e) => save("map_date_filter_to", e.target.value)} {...clearTo} /></label>
+          <label><span className="label-line">Von{pending === "map_date_filter_from" ? <span className="mini-loader" /> : null}</span><input type="date" disabled={pending === "map_date_filter_from"} value={s.map_date_filter_from || ""} onChange={(e) => save("map_date_filter_from", e.target.value)} {...clearFrom} /></label>
+          <label><span className="label-line">Bis{pending === "map_date_filter_to" ? <span className="mini-loader" /> : null}</span><input type="date" disabled={pending === "map_date_filter_to"} value={s.map_date_filter_to || ""} onChange={(e) => save("map_date_filter_to", e.target.value)} {...clearTo} /></label>
         </div>
       </section>
     </div>
@@ -498,6 +600,7 @@ function initialFormValues(form) {
     return {
       name: item.name || "",
       typ: item.typ || "",
+      bild_data: item.bild_data || "",
       notiz: item.notiz || "",
     };
   }
@@ -514,6 +617,7 @@ function initialFormValues(form) {
     schuss_lat: item.schuss_lat ?? "",
     schuss_lng: item.schuss_lng ?? "",
     schuss_kanzel_id: item.schuss_kanzel_id || "",
+    bild_data: item.bild_data || "",
     notiz: item.notiz || "",
   };
 }
@@ -527,37 +631,55 @@ function initialOriginLabel(item) {
 function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [weatherLoading, setWeatherLoading] = useState("");
+  const [imageLoading, setImageLoading] = useState(false);
   const formId = useRef(form.id || localId()).current;
-  const autofillStarted = useRef(false);
+  const datePickerRef = useRef(null);
+  const timePickerRef = useRef(null);
   const [originLabel, setOriginLabel] = useState(() => initialOriginLabel(form.item));
   const [values, setValues] = useState(() => initialFormValues(form));
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
+  const setImage = async (file) => {
+    if (!file) return;
+    setImageLoading(true);
+    try {
+      set("bild_data", await readImage(file));
+    } finally {
+      setImageLoading(false);
+    }
+  };
   const origin = originPick?.formId === formId ? originPick.origin : null;
   const picking = originPick?.formId === formId && !originPick.origin;
   const editing = form.mode === "edit";
-
-  useEffect(() => {
-    if (form.type !== "abschuss" || editing || autofillStarted.current) return undefined;
-    autofillStarted.current = true;
-    setValues((current) => ({
-      ...current,
-      datum: current.datum || today(),
-      uhrzeit: current.uhrzeit || currentTime(),
-    }));
-    const controller = new AbortController();
-    autofillWeather(form.point, controller.signal)
+  const fillWeather = (target) => {
+    if (form.type !== "abschuss") return;
+    setWeatherLoading(target);
+    autofillWeather(form.point, values.datum || today(), values.uhrzeit || currentTime())
       .then((next) => {
         if (!next) return;
         setValues((current) => ({
           ...current,
-          wetter: current.wetter || next.wetter,
-          wind: current.wind || next.wind,
+          ...(target === "wetter" ? { wetter: next.wetter } : {}),
+          ...(target === "wind" ? { wind: next.wind } : {}),
         }));
       })
-      .catch(() => {});
-    return () => controller.abort();
-  }, [editing, form.point, form.type]);
-
+      .catch(() => {})
+      .finally(() => setWeatherLoading(""));
+  };
+  const openNativePicker = (input) => {
+    if (!input) return;
+    try {
+      if (input.showPicker) input.showPicker();
+      else input.click();
+    } catch {
+      input.click();
+    }
+  };
+  const activateTimePicker = () => {
+    if (!timePickerRef.current) return;
+    timePickerRef.current.value = "";
+    openNativePicker(timePickerRef.current);
+  };
   useEffect(() => {
     if (!origin) return;
     setOriginLabel("Punkt gewählt");
@@ -590,6 +712,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" onSubmit={submit}>
         <header><h2>{form.type === "kanzel" ? "Kanzel" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <ImageInput value={values.bild_data} setImage={setImage} clear={() => set("bild_data", "")} loading={imageLoading} />
         {form.type === "kanzel" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
@@ -607,13 +730,26 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
               <label>Gewicht (kg)<input inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
             </div>
             <div className="two">
-              <label>Zeitpunkt<input type="datetime-local" value={dateTimeValue(values.datum, values.uhrzeit)} onChange={(e) => setValues((current) => ({ ...current, ...splitDateTime(e.target.value) }))} /></label>
+              <label>Zeitpunkt<span className="native-date-time date-time-split">
+                <span className="date-time-pair">
+                  <button type="button" className="date-time-trigger" onClick={() => {
+                    if (datePickerRef.current) datePickerRef.current.value = values.datum || today();
+                    openNativePicker(datePickerRef.current);
+                  }}>{values.datum || today()}</button>
+                  <input ref={datePickerRef} className="native-picker" type="date" onChange={(e) => set("datum", e.target.value)} />
+                </span>
+                <span className="date-time-pair">
+                  <button type="button" className="date-time-trigger" onContextMenu={(e) => { e.preventDefault(); set("uhrzeit", ""); }} onClick={() => activateTimePicker()}>{values.uhrzeit || "--:--"}</button>
+                  <input ref={timePickerRef} className="native-picker" type="time" onChange={(e) => set("uhrzeit", e.target.value)} />
+                </span>
+              </span></label>
               <label>Schütze<input list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
             </div>
+
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
             <div className="two">
-              <label>Wetter<input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /></label>
-              <label>Wind<input value={values.wind} onChange={(e) => set("wind", e.target.value)} /></label>
+              <label>Wetter<span className="field-with-button"><input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
+              <label>Wind<span className="field-with-button"><input value={values.wind} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
             </div>
             <label>Schussort<select value="" onChange={(e) => {
               const kanzel = data.kanzeln.find((item) => item.id === e.target.value);
@@ -626,40 +762,196 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
               }));
               setOriginLabel("Punkt gewählt");
             }}><option value="">Kanzel</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
-            <div className="origin-row">
+            <div className={`origin-row ${originLabel === "Punkt gewählt" ? "has-action" : ""}`}>
               <button type="button" className={originLabel === "Punkt gewählt" ? "chosen" : ""} onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung frei wählen</button>
+              {originLabel === "Punkt gewählt" ? <button type="button" className="image-remove" aria-label="Schussursprung entfernen" onClick={() => {
+                setValues((current) => ({ ...current, schuss_lat: "", schuss_lng: "", schuss_kanzel_id: "" }));
+                setOriginLabel("");
+              }}><X size={18} /></button> : null}
             </div>
             <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
           </>
         )}
         <p className="error">{error}</p>
-        <button className="primary" type="submit" disabled={saving}>{saving ? "Speichert..." : "Speichern"}</button>
+        <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving}>{saving ? "Speichert" : "Speichern"}</button>
       </form>
     </div>
   );
 }
 
+function ImageInput({ value, setImage, clear, loading }) {
+  return (
+    <div className={`image-input ${value ? "has-action" : ""}`}>
+      <label className={`upload-button ${value ? "chosen" : ""} ${loading ? "is-loading" : ""}`}>{loading ? "Lädt" : "Bild hochladen"}<input type="file" accept="image/*" disabled={loading} onChange={(e) => setImage(e.target.files?.[0])} /></label>
+      {value ? <button type="button" className="image-remove" onClick={clear} aria-label="Bild entfernen"><X size={18} /></button> : null}
+    </div>
+  );
+}
+
 function DetailPanel({ data, selected, item, close, load, openForm }) {
+  const [imageOpen, setImageOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState("");
+  const stageRef = useRef(null);
+  const imageRef = useRef(null);
+  const transformRef = useRef({ scale: 1, x: 0, y: 0 });
+  const frameRef = useRef(null);
+  const pinchRef = useRef(null);
+  const dragRef = useRef(null);
+  const applyImageTransform = () => {
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      if (!imageRef.current) return;
+      const { scale, x, y } = transformRef.current;
+      imageRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+    });
+  };
+  const setImageTransform = (next) => {
+    transformRef.current = next.scale <= 1 ? { scale: 1, x: 0, y: 0 } : next;
+    applyImageTransform();
+  };
+  const stageCenter = () => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  };
+  const zoomImageAt = (clientX, clientY, nextScale, base = transformRef.current, basePoint = { x: clientX, y: clientY }) => {
+    const scale = Math.min(IMAGE_MAX_ZOOM, Math.max(1, nextScale));
+    const center = stageCenter();
+    const startX = basePoint.x - center.x;
+    const startY = basePoint.y - center.y;
+    const focalX = clientX - center.x;
+    const focalY = clientY - center.y;
+    const ratio = scale / base.scale;
+    setImageTransform({
+      scale,
+      x: focalX - ratio * (startX - base.x),
+      y: focalY - ratio * (startY - base.y),
+    });
+  };
+  const openImage = () => {
+    transformRef.current = { scale: 1, x: 0, y: 0 };
+    setImageOpen(true);
+  };
+  const startImageDrag = (clientX, clientY) => {
+    if (transformRef.current.scale <= 1) return;
+    dragRef.current = { clientX, clientY, x: transformRef.current.x, y: transformRef.current.y };
+  };
+  const moveImageDrag = (clientX, clientY) => {
+    if (!dragRef.current) return;
+    setImageTransform({
+      scale: transformRef.current.scale,
+      x: dragRef.current.x + clientX - dragRef.current.clientX,
+      y: dragRef.current.y + clientY - dragRef.current.clientY,
+    });
+  };
+  const setPinchZoom = (event) => {
+    if (event.touches.length !== 2 || !pinchRef.current) return;
+    event.preventDefault();
+    const [a, b] = event.touches;
+    const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const midpoint = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    const next = pinchRef.current.base.scale * (distance / pinchRef.current.distance);
+    zoomImageAt(midpoint.x, midpoint.y, next, pinchRef.current.base, pinchRef.current.midpoint);
+  };
+  useEffect(() => () => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+  }, []);
   const archive = async () => {
-    await api(`/api/${apiName(selected.type)}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
-    await load();
+    setActionLoading("archive");
+    try {
+      await api(`/api/${apiName(selected.type)}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
+      await load();
+    } finally {
+      setActionLoading("");
+    }
   };
   const del = async () => {
-    await api(`/api/${apiName(selected.type)}/${item.id}`, { method: "DELETE" });
-    close();
-    await load();
+    setActionLoading("delete");
+    try {
+      await api(`/api/${apiName(selected.type)}/${item.id}`, { method: "DELETE" });
+      close();
+      await load();
+    } finally {
+      setActionLoading("");
+    }
   };
   return (
     <aside className="detail">
-      <header><h2>{item.name || item.wildart}</h2><button type="button" onClick={close}><X size={18} /></button></header>
-      {item.status === "archiviert" ? <p className="muted">Archiviert</p> : null}
+      <header>
+        <div className="detail-title">
+          {item.bild_data ? <button type="button" className="image-thumb" onClick={openImage}><img src={item.bild_data} alt="" /></button> : null}
+          <div className="detail-heading">
+            <h2>{item.name || item.wildart}</h2>
+            {item.status === "archiviert" ? <p className="muted">Archiviert</p> : null}
+          </div>
+        </div>
+        <button type="button" onClick={close}><X size={18} /></button>
+      </header>
       <Rows selected={selected} item={item} data={data} />
       {item.notiz ? <p>{item.notiz}</p> : null}
       <div className="actions">
-        <button type="button" onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
-        <button type="button" onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
-        <button type="button" className="danger" onClick={del}><Trash2 size={16} />Löschen</button>
+        <button type="button" disabled={Boolean(actionLoading)} onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
+        <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+        <button type="button" disabled={Boolean(actionLoading)} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={del}><Trash2 size={16} />Löschen</button>
       </div>
+      {imageOpen ? createPortal((
+        <div className="image-lightbox" onClick={() => setImageOpen(false)}>
+          <button type="button" className="image-close" onClick={() => setImageOpen(false)} aria-label="Schließen"><X size={20} /></button>
+          <div
+            className="image-stage"
+            ref={stageRef}
+            onClick={(event) => event.stopPropagation()}
+            onWheel={(event) => {
+              event.preventDefault();
+              zoomImageAt(event.clientX, event.clientY, transformRef.current.scale + (event.deltaY < 0 ? 0.45 : -0.45));
+            }}
+            onDoubleClick={(event) => {
+              if (transformRef.current.scale > 1) setImageTransform({ scale: 1, x: 0, y: 0 });
+              else zoomImageAt(event.clientX, event.clientY, 2);
+            }}
+            onMouseDown={(event) => startImageDrag(event.clientX, event.clientY)}
+            onMouseMove={(event) => moveImageDrag(event.clientX, event.clientY)}
+            onMouseUp={() => {
+              dragRef.current = null;
+            }}
+            onMouseLeave={() => {
+              dragRef.current = null;
+            }}
+            onTouchStart={(event) => {
+              if (event.touches.length === 1) {
+                startImageDrag(event.touches[0].clientX, event.touches[0].clientY);
+                return;
+              }
+              if (event.touches.length !== 2) return;
+              const [a, b] = event.touches;
+              dragRef.current = null;
+              const midpoint = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+              pinchRef.current = {
+                distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+                midpoint,
+                base: { ...transformRef.current },
+              };
+            }}
+            onTouchMove={(event) => {
+              if (event.touches.length === 2) {
+                setPinchZoom(event);
+                return;
+              }
+              if (event.touches.length === 1 && dragRef.current) {
+                event.preventDefault();
+                moveImageDrag(event.touches[0].clientX, event.touches[0].clientY);
+              }
+            }}
+            onTouchEnd={() => {
+              pinchRef.current = null;
+              dragRef.current = null;
+            }}
+          >
+            <img ref={imageRef} src={item.bild_data} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
+          </div>
+        </div>
+      ), document.body) : null}
     </aside>
   );
 }
@@ -687,6 +979,7 @@ function Rows({ selected, item, data }) {
 }
 
 function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load }) {
+  const [pendingId, setPendingId] = useState("");
   const clearFrom = useLongPressClear(() => setFilters((current) => ({ ...current, from: "" })));
   const clearTo = useLongPressClear(() => setFilters((current) => ({ ...current, to: "" })));
   const items = data[tab]
@@ -700,8 +993,13 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       ? compareAbschuss(b, a)
       : String(a.name || "").localeCompare(String(b.name || ""), "de", { sensitivity: "base" }));
   const toggleArchive = async (item) => {
-    await api(`/api/${tab}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
-    await load();
+    setPendingId(item.id);
+    try {
+      await api(`/api/${tab}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
+      await load();
+    } finally {
+      setPendingId("");
+    }
   };
   return (
     <main className="list-screen">
@@ -716,7 +1014,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
         <div><strong>{item.name || item.wildart}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
         <div className="row-actions">
           <button type="button" onClick={() => { openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Karte</button>
-          <button type="button" onClick={() => toggleArchive(item)}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+          <button type="button" disabled={pendingId === item.id} className={pendingId === item.id ? "is-loading" : ""} onClick={() => toggleArchive(item)}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
         </div>
       </article>)}</section>
     </main>

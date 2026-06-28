@@ -23,7 +23,7 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
 const app = express();
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "8mb" }));
 app.use(cookieParser());
 
 function id() {
@@ -83,6 +83,7 @@ function setupDb() {
       position_lat REAL NOT NULL,
       position_lng REAL NOT NULL,
       status TEXT NOT NULL DEFAULT 'aktiv',
+      bild_data TEXT,
       notiz TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -110,6 +111,7 @@ function setupDb() {
       wind_richtung TEXT,
       wind_speed_kmh REAL,
       status TEXT NOT NULL DEFAULT 'aktiv',
+      bild_data TEXT,
       notiz TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -139,6 +141,8 @@ function setupDb() {
   ensureColumn("abschuss", "uhrzeit", "TEXT");
   ensureColumn("abschuss", "wind_richtung", "TEXT");
   ensureColumn("abschuss", "wind_speed_kmh", "REAL");
+  ensureColumn("abschuss", "bild_data", "TEXT");
+  ensureColumn("kanzel", "bild_data", "TEXT");
 }
 
 function ensureColumn(table, column, definition) {
@@ -265,8 +269,8 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
     db.prepare(`
       INSERT INTO kanzel (
         id, revier_id, name, typ, position_lat, position_lng,
-        status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, bild_data, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
@@ -275,6 +279,7 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
       lat,
       lng,
       itemStatus(req.body.status),
+      optional(req.body.bild_data),
       optional(req.body.notiz),
       stamp,
       stamp
@@ -302,8 +307,8 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       INSERT INTO abschuss (
         id, revier_id, kanzel_id, position_lat, position_lng, schuss_lat,
         schuss_lng, schuss_kanzel_id, datum, uhrzeit, wildart, geschlecht, alter_text,
-        schuetz_name, gewicht_kg, wetter, wind, status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        schuetz_name, gewicht_kg, wetter, wind, bild_data, status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
@@ -322,6 +327,7 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       optionalNum(req.body.gewicht_kg),
       optional(req.body.wetter),
       optional(req.body.wind),
+      optional(req.body.bild_data),
       itemStatus(req.body.status),
       optional(req.body.notiz),
       stamp,
@@ -366,8 +372,8 @@ function remove(table) {
   };
 }
 
-app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "notiz"]));
-app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text", "schuetz_name", "gewicht_kg", "wetter", "wind", "status", "notiz"]));
+app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "bild_data", "notiz"]));
+app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text", "schuetz_name", "gewicht_kg", "wetter", "wind", "bild_data", "status", "notiz"]));
 app.delete("/api/kanzeln/:id", requireAuth, remove("kanzel"));
 app.delete("/api/abschuesse/:id", requireAuth, remove("abschuss"));
 
