@@ -7,6 +7,8 @@ import { Layers, List, LocateFixed, Map as MapIcon, Settings, Trash2, X } from "
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
+let LAST_ZOOM = 14;
+
 const api = async (path, options = {}) => {
   const res = await fetch(path, {
     credentials: "same-origin",
@@ -15,7 +17,12 @@ const api = async (path, options = {}) => {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
+  let json;
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`);
+  }
   if (!res.ok) throw new Error(json.error || "Fehler");
   return json;
 };
@@ -186,12 +193,12 @@ function geschlechtValue(value) {
 function markerLetter(value, fallback) {
   const letters = String(value || "")
     .trim()
-    .split(/\s+/)
+    .split(" ")
     .map((part) => part.match(/[\p{L}\p{N}]/u)?.[0])
     .filter(Boolean)
     .slice(0, 2)
     .join("");
-  return (letters || fallback).toLocaleUpperCase("de-DE");
+  return letters || fallback;
 }
 
 function shotPulseTiming(item) {
@@ -215,7 +222,9 @@ function shotPulseTiming(item) {
 }
 
 const markerIcon = (type, item = null, archived = false, pulse = null) => {
-  const size = archived ? 18 : 25;
+  const kameraSize = archived ? 9 : 12;
+  const otherSize = archived ? 18 : 25;
+  const size = type === "kamera" ? kameraSize : otherSize;
   const pulseName = pulse ? `shot-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
   const pulseCount = 8;
   const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
@@ -228,7 +237,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   }).join("")}` : "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: `${pulseHtml}<span>${type === "kanzel" ? markerLetter(item?.name, "K") : markerLetter(item?.wildart, "A")}</span>`,
+    html: `${pulseHtml}<span>${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -277,6 +286,8 @@ function App() {
   const [selfPos, setSelfPos] = useState(null);
   const [listTab, setListTab] = useState("kanzeln");
   const [filters, setFilters] = useState({ q: "", showArchived: false, from: "", to: "" });
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
 
   const load = async () => setData(await api("/api/map-data"));
 
@@ -298,7 +309,10 @@ function App() {
     setCreateAt(null);
     setForm(null);
     setOriginPick(null);
+    setAccountOpen(false);
   };
+
+  const isViewer = data?.role === "viewer";
 
   const showView = (next) => {
     closeWindows();
@@ -353,7 +367,7 @@ function App() {
           <button className={view === "map" ? "active" : ""} onClick={() => showView("map")}><MapIcon size={17} />Karte</button>
           <button className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
         </nav>
-        <button className="quiet" onClick={async () => { await api("/api/logout", { method: "POST" }); setData(null); }}>Abmelden</button>
+        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} />
       </header>
 
       {view === "map" ? (
@@ -361,21 +375,25 @@ function App() {
           data={data}
           selected={selected}
           openSelection={openSelection}
-          openCreate={openCreate}
+          openCreate={isViewer ? () => {} : openCreate}
           originPick={originPick}
           setOriginPick={setOriginPick}
           selfPos={selfPos}
           setSelfPos={setSelfPos}
           openSettings={openSettings}
+          isViewer={isViewer}
         />
       ) : (
-        <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} />
+        <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} setConfirmAction={setConfirmAction} />
       )}
 
-      {settingsOpen && !originPick && <SettingsPanel data={data} load={load} close={() => setSettingsOpen(false)} />}
-      {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={openForm} />}
-      {createAt && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={openForm} />}
-      {form && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
+      {settingsOpen && !originPick && <SettingsPanel data={data} load={load} close={() => setSettingsOpen(false)} isViewer={isViewer} />}
+      {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={isViewer ? () => {} : openForm} isViewer={isViewer} setConfirmAction={setConfirmAction} />}
+      {createAt && !isViewer && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={openForm} />}
+      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
+
+      {accountOpen && <AccountPanel data={data} load={load} close={() => setAccountOpen(false)} setConfirmAction={setConfirmAction} />}
+      {confirmAction && <ConfirmDialog message={confirmAction.message} hint={confirmAction.hint} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
 
     </div>
   );
@@ -388,8 +406,8 @@ function Login({ error, onLogin }) {
     <main className="login">
       <form onSubmit={(e) => { e.preventDefault(); onLogin({ name, passwort }); }}>
         <div className="login-head">
-          <span className="login-badge">J</span>
-          <h1>Jagd</h1>
+          <span className="login-badge">{name.charAt(0).toUpperCase() || "J"}</span>
+          <h1>{name || "Jagd"}</h1>
           <p>Revierverwaltung</p>
         </div>
         <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" /></label>
@@ -401,15 +419,104 @@ function Login({ error, onLogin }) {
   );
 }
 
-function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings }) {
+function HeaderMenu({ onLogout, onAccount, isViewer }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (btnRef.current && !btnRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [open]);
+  return (
+    <div className="header-menu">
+      <button type="button" className="quiet" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>...</button>
+      {open ? createPortal((
+        <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
+          {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
+          <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
+        </div>
+      ), document.body) : null}
+    </div>
+  );
+}
+
+function AccountPanel({ data, load, close, setConfirmAction }) {
+  const [name, setName] = useState(data.revier.name);
+  const [passwort, setPasswort] = useState("••••••••");
+  const [viewerPasswort, setViewerPasswort] = useState(data.revier.has_viewer_passwort ? "••••••••" : "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const viewerTouched = useRef(false);
+  const adminTouched = useRef(false);
+  const submit = () => {
+    setSaving(true);
+    setError("");
+    const body = { name };
+    if (adminTouched.current && passwort) body.passwort = passwort;
+    if (viewerTouched.current) body.viewer_passwort = viewerPasswort;
+    api("/api/revier", { method: "PATCH", body })
+      .then(() => { load(); close(); })
+      .catch((err) => setError(err.message))
+      .finally(() => setSaving(false));
+  };
+  return (
+    <div className="overlay">
+      <form className="modal small" onSubmit={(e) => { e.preventDefault(); setConfirmAction({ message: "Account-Daten ändern?", action: submit }); }}>
+        <header><h2>Account-Daten ändern</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <label>Revierpasswort<input type="password" value={passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
+        <label>Gast-Passwort<input type="password" value={viewerPasswort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
+        {error ? <p className="error">{error}</p> : null}
+        <button type="submit" className={`primary ${saving ? "is-loading" : ""}`} disabled={saving}>Speichern</button>
+      </form>
+    </div>
+  );
+}
+
+function ConfirmDialog({ message, hint, onConfirm, onCancel }) {
+  return (
+    <div className="overlay">
+      <section className="modal small">
+        <header><h2>Bestätigen</h2></header>
+        <p className="confirm-text">{hint ? `${message} ${hint}` : message}</p>
+        <div className="confirm-actions">
+          <button type="button" onClick={onCancel}>Abbrechen</button>
+          <button type="button" className="primary" onClick={onConfirm}>Ja</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MapInit({ center }) {
+  const map = useMap();
+  const done = useRef(false);
+  useEffect(() => {
+    if (!done.current) {
+      done.current = true;
+      map.setView(center, LAST_ZOOM, { animate: false });
+    }
+    const onZoom = () => { LAST_ZOOM = map.getZoom(); };
+    map.on("zoomend", onZoom);
+    return () => map.off("zoomend", onZoom);
+  }, []);
+  return null;
+}
+
+function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer }) {
   const visible = useVisibleData(data);
-  const center = markerCenter([...visible.kanzeln, ...visible.abschuesse]);
+  const center = markerCenter([...visible.kanzeln, ...visible.kameras, ...visible.abschuesse]);
   return (
     <main className="map-shell">
-      <MapContainer center={center} zoom={14} zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} className="map">
+        <MapInit center={center} />
         <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
+        <FlyToSelection data={data} selected={selected} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
         {originPick ? <PickTarget originPick={originPick} /> : null}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
@@ -422,6 +529,19 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
                 if (originPick) setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
                 else openSelection({ type: "kanzel", id: kanzel.id });
+              },
+            }}
+          />
+        )) : null}
+        {Number(data.settings.show_kameras) ? visible.kameras.map((kamera) => (
+          <Marker
+            key={kamera.id}
+            position={[kamera.position_lat, kamera.position_lng]}
+            icon={markerIcon("kamera", kamera, kamera.status === "archiviert")}
+            eventHandlers={{
+              click: (event) => {
+                if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+                openSelection({ type: "kamera", id: kamera.id });
               },
             }}
           />
@@ -542,7 +662,11 @@ function FlyToSelection({ data, selected }) {
   const map = useMap();
   useEffect(() => {
     const item = findObject(data, selected);
-    if (item) map.flyTo([item.position_lat, item.position_lng], Math.max(map.getZoom(), 15), { duration: 0.35 });
+    if (!item) return;
+    const size = map.getSize();
+    const target = map.latLngToContainerPoint([item.position_lat, item.position_lng]);
+    const center = map.containerPointToLatLng([target.x, target.y + size.y / 4]);
+    map.setView(center, map.getZoom(), { animate: false });
   }, [selected?.id]);
   return null;
 }
@@ -570,6 +694,7 @@ function SettingsPanel({ data, load, close }) {
         {[
           ["show_self_location", "Eigene Position"],
           ["show_kanzeln", "Kanzeln"],
+          ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={pending === key} checked={Boolean(Number(s[key]))} onChange={(e) => save(key, e.target.checked)} />{label}{pending === key ? <span className="mini-loader" /> : null}</label>)}
@@ -587,7 +712,10 @@ function CreateWindow({ point, close, openForm }) {
     <div className="overlay">
       <section className="modal small">
         <header><h2>Erstellen</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
+        <div className="two">
+          <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
+          <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Kamera</button>
+        </div>
         <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
       </section>
     </div>
@@ -601,6 +729,18 @@ function initialFormValues(form) {
       name: item.name || "",
       typ: item.typ || "",
       bild_data: item.bild_data || "",
+      bild2: item.bild2 || "",
+      bild3: item.bild3 || "",
+      notiz: item.notiz || "",
+    };
+  }
+  if (form.type === "kamera") {
+    return {
+      name: item.name || "",
+      typ: item.typ || "",
+      bild_data: item.bild_data || "",
+      bild2: item.bild2 || "",
+      bild3: item.bild3 || "",
       notiz: item.notiz || "",
     };
   }
@@ -618,6 +758,8 @@ function initialFormValues(form) {
     schuss_lng: item.schuss_lng ?? "",
     schuss_kanzel_id: item.schuss_kanzel_id || "",
     bild_data: item.bild_data || "",
+    bild2: item.bild2 || "",
+    bild3: item.bild3 || "",
     notiz: item.notiz || "",
   };
 }
@@ -632,21 +774,30 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [weatherLoading, setWeatherLoading] = useState("");
-  const [imageLoading, setImageLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(null);
   const formId = useRef(form.id || localId()).current;
   const datePickerRef = useRef(null);
   const timePickerRef = useRef(null);
   const [originLabel, setOriginLabel] = useState(() => initialOriginLabel(form.item));
   const [values, setValues] = useState(() => initialFormValues(form));
+  const [selectedKanzelId, setSelectedKanzelId] = useState(() => {
+    if (!form.item) return "";
+    return form.item.schuss_kanzel_id || "";
+  });
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
-  const setImage = async (file) => {
+  const setImage = async (index, file) => {
     if (!file) return;
-    setImageLoading(true);
+    setImageLoading(index);
     try {
-      set("bild_data", await readImage(file));
+      const key = index === 0 ? "bild_data" : `bild${index + 1}`;
+      set(key, await readImage(file));
     } finally {
-      setImageLoading(false);
+      setImageLoading(null);
     }
+  };
+  const clearImage = (index) => {
+    const key = index === 0 ? "bild_data" : `bild${index + 1}`;
+    set(key, "");
   };
   const origin = originPick?.formId === formId ? originPick.origin : null;
   const picking = originPick?.formId === formId && !originPick.origin;
@@ -698,7 +849,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setError("");
     try {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
-      const path = form.type === "kanzel" ? "/api/kanzeln" : "/api/abschuesse";
+      const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : "/api/abschuesse";
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
       await load();
     } catch (err) {
@@ -711,9 +862,9 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" onSubmit={submit}>
-        <header><h2>{form.type === "kanzel" ? "Kanzel" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <ImageInput value={values.bild_data} setImage={setImage} clear={() => set("bild_data", "")} loading={imageLoading} />
-        {form.type === "kanzel" ? (
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Kamera" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} />
+        {form.type === "kanzel" || form.type === "kamera" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
             <label>Typ<input value={values.typ} onChange={(e) => set("typ", e.target.value)} /></label>
@@ -751,8 +902,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
               <label>Wetter<span className="field-with-button"><input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
               <label>Wind<span className="field-with-button"><input value={values.wind} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
             </div>
-            <label>Schussort<select value="" onChange={(e) => {
-              const kanzel = data.kanzeln.find((item) => item.id === e.target.value);
+            <label>Schussort<select value={selectedKanzelId} onChange={(e) => {
+              const id = e.target.value;
+              setSelectedKanzelId(id);
+              const kanzel = data.kanzeln.find((item) => item.id === id);
               if (!kanzel) return;
               setValues((current) => ({
                 ...current,
@@ -762,12 +915,16 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
               }));
               setOriginLabel("Punkt gewählt");
             }}><option value="">Kanzel</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
-            <div className={`origin-row ${originLabel === "Punkt gewählt" ? "has-action" : ""}`}>
-              <button type="button" className={originLabel === "Punkt gewählt" ? "chosen" : ""} onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung frei wählen</button>
-              {originLabel === "Punkt gewählt" ? <button type="button" className="image-remove" aria-label="Schussursprung entfernen" onClick={() => {
-                setValues((current) => ({ ...current, schuss_lat: "", schuss_lng: "", schuss_kanzel_id: "" }));
-                setOriginLabel("");
-              }}><X size={18} /></button> : null}
+            <div className="origin-row">
+              {originLabel === "Punkt gewählt" ? (
+                <button type="button" className="origin-remove" onClick={() => {
+                  setValues((current) => ({ ...current, schuss_lat: "", schuss_lng: "", schuss_kanzel_id: "" }));
+                  setOriginLabel("");
+                  setSelectedKanzelId("");
+                }}><Trash2 size={16} /></button>
+              ) : (
+                <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung frei wählen</button>
+              )}
             </div>
             <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
           </>
@@ -779,17 +936,28 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   );
 }
 
-function ImageInput({ value, setImage, clear, loading }) {
+function ImageSlots({ images, setImage, clearImage, loading }) {
   return (
-    <div className={`image-input ${value ? "has-action" : ""}`}>
-      <label className={`upload-button ${value ? "chosen" : ""} ${loading ? "is-loading" : ""}`}>{loading ? "Lädt" : "Bild hochladen"}<input type="file" accept="image/*" disabled={loading} onChange={(e) => setImage(e.target.files?.[0])} /></label>
-      {value ? <button type="button" className="image-remove" onClick={clear} aria-label="Bild entfernen"><X size={18} /></button> : null}
+    <div className="image-slots">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className={`image-slot ${images[i] ? "filled" : ""} ${loading === i ? "loading" : ""}`}>
+          {images[i] ? (
+            <button type="button" className="image-remove" onClick={() => clearImage(i)} aria-label="Bild entfernen"><Trash2 size={16} /></button>
+          ) : (
+            <label className={`upload-button ${loading === i ? "is-loading" : ""}`}>
+              {loading === i ? "Lädt" : <>+ Bild {i + 1}</>}
+              <input type="file" accept="image/*" disabled={loading === i} onChange={(e) => setImage(i, e.target.files?.[0])} />
+            </label>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
 
-function DetailPanel({ data, selected, item, close, load, openForm }) {
+function DetailPanel({ data, selected, item, close, load, openForm, isViewer, setConfirmAction }) {
   const [imageOpen, setImageOpen] = useState(false);
+  const [imageIdx, setImageIdx] = useState(0);
   const [actionLoading, setActionLoading] = useState("");
   const stageRef = useRef(null);
   const imageRef = useRef(null);
@@ -876,11 +1044,18 @@ function DetailPanel({ data, selected, item, close, load, openForm }) {
       setActionLoading("");
     }
   };
+  const detailImages = [item.bild_data, item.bild2, item.bild3].filter(Boolean);
   return (
     <aside className="detail">
       <header>
         <div className="detail-title">
-          {item.bild_data ? <button type="button" className="image-thumb" onClick={openImage}><img src={item.bild_data} alt="" /></button> : null}
+          {detailImages.length ? (
+            <div className="detail-thumbs">
+              {detailImages.map((src, i) => (
+                <button key={i} type="button" className="image-thumb" onClick={() => { transformRef.current = { scale: 1, x: 0, y: 0 }; setImageIdx(i); setImageOpen(true); }}><img src={src} alt="" /></button>
+              ))}
+            </div>
+          ) : null}
           <div className="detail-heading">
             <h2>{item.name || item.wildart}</h2>
             {item.status === "archiviert" ? <p className="muted">Archiviert</p> : null}
@@ -890,11 +1065,13 @@ function DetailPanel({ data, selected, item, close, load, openForm }) {
       </header>
       <Rows selected={selected} item={item} data={data} />
       {item.notiz ? <p>{item.notiz}</p> : null}
-      <div className="actions">
-        <button type="button" disabled={Boolean(actionLoading)} onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
-        <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
-        <button type="button" disabled={Boolean(actionLoading)} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={del}><Trash2 size={16} />Löschen</button>
-      </div>
+      {!isViewer ? (
+        <div className="actions">
+          <button type="button" disabled={Boolean(actionLoading)} onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
+          <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+          <button type="button" disabled={Boolean(actionLoading)} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: "Oft ist es besser, das Element zu archivieren.", action: del })}><Trash2 size={16} />Löschen</button>
+        </div>
+      ) : null}
       {imageOpen ? createPortal((
         <div className="image-lightbox" onClick={() => setImageOpen(false)}>
           <button type="button" className="image-close" onClick={() => setImageOpen(false)} aria-label="Schließen"><X size={20} /></button>
@@ -948,7 +1125,7 @@ function DetailPanel({ data, selected, item, close, load, openForm }) {
               dragRef.current = null;
             }}
           >
-            <img ref={imageRef} src={item.bild_data} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
+            <img ref={imageRef} src={detailImages[imageIdx]} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
           </div>
         </div>
       ), document.body) : null}
@@ -959,27 +1136,26 @@ function DetailPanel({ data, selected, item, close, load, openForm }) {
 function Rows({ selected, item, data }) {
   const origin = selected.type === "abschuss" ? shotOrigin(item, data) : null;
   const distance = selected.type === "abschuss" ? shotDistance(item, data) : null;
+  const windText = item.wind || formatWind(item);
   if (selected.type === "abschuss") {
     return (
       <dl>
-        <dt>Wildart</dt><dd>{item.wildart}</dd>
-        <dt>Geschlecht</dt><dd>{geschlechtValue(item.geschlecht) || "-"}</dd>
-        <dt>Alter</dt><dd>{item.alter_text ? `${item.alter_text} Jahre` : "-"}</dd>
-        <dt>Gewicht</dt><dd>{item.gewicht_kg !== null && item.gewicht_kg !== undefined ? `${item.gewicht_kg} kg` : "-"}</dd>
-        <dt>Zeitpunkt</dt><dd>{dateTimeText(item)}</dd>
-        <dt>Schütze</dt><dd>{item.schuetz_name || "-"}</dd>
-        <dt>Wetter</dt><dd>{item.wetter || "-"}</dd>
-        <dt>Wind</dt><dd>{item.wind || formatWind(item) || "-"}</dd>
-        <dt>Schuss</dt><dd>{origin ? `${origin.lat.toFixed(5)}, ${origin.lng.toFixed(5)} (${distance} m)` : "-"}</dd>
+        {geschlechtValue(item.geschlecht) ? <><dt>Geschlecht</dt><dd>{geschlechtValue(item.geschlecht)}</dd></> : null}
+        {item.alter_text ? <><dt>Alter</dt><dd>{item.alter_text} Jahre</dd></> : null}
+        {item.gewicht_kg !== null && item.gewicht_kg !== undefined ? <><dt>Gewicht</dt><dd>{item.gewicht_kg} kg</dd></> : null}
+        {item.datum ? <><dt>Zeitpunkt</dt><dd>{dateTimeText(item)}</dd></> : null}
+        {item.schuetz_name ? <><dt>Schütze</dt><dd>{item.schuetz_name}</dd></> : null}
+        {item.wetter ? <><dt>Wetter</dt><dd>{item.wetter}</dd></> : null}
+        {windText ? <><dt>Wind</dt><dd>{windText}</dd></> : null}
+        {origin ? <><dt>Schuss</dt><dd>{origin.lat.toFixed(5)}, {origin.lng.toFixed(5)} ({distance} m)</dd></> : null}
         <dt>Position</dt><dd>{positionText(item)}</dd>
       </dl>
     );
   }
-  return <dl><dt>Name</dt><dd>{item.name}</dd><dt>Typ</dt><dd>{item.typ || "-"}</dd><dt>Position</dt><dd>{positionText(item)}</dd></dl>;
+  return <dl><dt>Name</dt><dd>{item.name}</dd>{item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
 }
 
-function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load }) {
-  const [pendingId, setPendingId] = useState("");
+function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction }) {
   const clearFrom = useLongPressClear(() => setFilters((current) => ({ ...current, from: "" })));
   const clearTo = useLongPressClear(() => setFilters((current) => ({ ...current, to: "" })));
   const items = data[tab]
@@ -992,18 +1168,9 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
     .sort((a, b) => tab === "abschuesse"
       ? compareAbschuss(b, a)
       : String(a.name || "").localeCompare(String(b.name || ""), "de", { sensitivity: "base" }));
-  const toggleArchive = async (item) => {
-    setPendingId(item.id);
-    try {
-      await api(`/api/${tab}/${item.id}`, { method: "PATCH", body: { status: item.status === "archiviert" ? "aktiv" : "archiviert" } });
-      await load();
-    } finally {
-      setPendingId("");
-    }
-  };
   return (
     <main className="list-screen">
-      <nav className="tabs wide">{["kanzeln", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
+      <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
       <div className="filters">
         <label>Suchen<input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
@@ -1013,8 +1180,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       <section className="rows">{items.map((item) => <article key={item.id} className={item.status === "archiviert" ? "is-archived" : ""}>
         <div><strong>{item.name || item.wildart}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
         <div className="row-actions">
-          <button type="button" onClick={() => { openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Karte</button>
-          <button type="button" disabled={pendingId === item.id} className={pendingId === item.id ? "is-loading" : ""} onClick={() => toggleArchive(item)}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+          <button type="button" onClick={() => { openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
         </div>
       </article>)}</section>
     </main>
@@ -1028,6 +1194,7 @@ function useVisibleData(data) {
     const date = (item) => (!data.settings.map_date_filter_from || item.datum >= data.settings.map_date_filter_from) && (!data.settings.map_date_filter_to || item.datum <= data.settings.map_date_filter_to);
     return {
       kanzeln: data.kanzeln.filter(active),
+      kameras: data.kameras.filter(active),
       abschuesse: data.abschuesse.filter((a) => active(a) && date(a)),
     };
   }, [data]);
@@ -1084,7 +1251,9 @@ function findObject(data, selected) {
 }
 
 function apiName(type) {
-  return type === "kanzel" ? "kanzeln" : "abschuesse";
+  if (type === "kanzel") return "kanzeln";
+  if (type === "kamera") return "kameras";
+  return "abschuesse";
 }
 
 function formKey(form) {
@@ -1093,11 +1262,15 @@ function formKey(form) {
 }
 
 function singular(tab) {
-  return tab === "kanzeln" ? "kanzel" : "abschuss";
+  if (tab === "kanzeln") return "kanzel";
+  if (tab === "kameras") return "kamera";
+  return "abschuss";
 }
 
 function label(tab) {
-  return tab === "kanzeln" ? "Kanzeln" : "Abschüsse";
+  if (tab === "kanzeln") return "Kanzeln";
+  if (tab === "kameras") return "Kameras";
+  return "Abschüsse";
 }
 
 function compareAbschuss(a, b) {

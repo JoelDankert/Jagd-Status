@@ -135,6 +135,7 @@ textarea { min-height: 80px; resize: vertical; }
 
 .app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
 .top {
+  position: relative;
   height: 58px;
   display: flex;
   align-items: center;
@@ -145,7 +146,39 @@ textarea { min-height: 80px; resize: vertical; }
   z-index: 500;
 }
 .top strong { white-space: nowrap; }
-.top > .quiet { margin-left: auto; }
+.header-menu {
+  margin-left: auto;
+  position: relative;
+}
+.header-menu > .quiet {
+  padding: 8px 10px;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: 1px;
+  font-weight: 800;
+}
+.header-dropdown {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.08);
+  z-index: 2000;
+  min-width: 140px;
+  overflow: hidden;
+}
+.header-dropdown button {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+  border-radius: 0;
+  min-height: auto;
+  font-size: 14px;
+  background: transparent;
+}
+.header-dropdown button:hover {
+  background: #e2e8df;
+}
 .tabs {
   display: inline-flex;
   gap: 3px;
@@ -297,17 +330,30 @@ button:disabled, input:disabled {
   border-radius: 7px;
   --pin-bg: #111111;
 }
-.pin.abschuss { --pin-bg: #c57a1f; }
-.pin.abschuss.wild-rehwild { --pin-bg: #33a852; }
-.pin.abschuss.wild-rotwild { --pin-bg: #b64242; }
-.pin.abschuss.wild-damwild { --pin-bg: #d96f32; }
-.pin.abschuss.wild-schwarzwild { --pin-bg: #3f4652; }
-.pin.abschuss.wild-fuchs { --pin-bg: #ef5d28; }
-.pin.abschuss.wild-hase { --pin-bg: #9b6b43; }
-.pin.abschuss.wild-ente { --pin-bg: #1f9aa5; }
-.pin.abschuss.wild-gans { --pin-bg: #6177d8; }
-.pin.abschuss.wild-taube { --pin-bg: #8e63d9; }
-.pin.abschuss.wild-sonstiges { --pin-bg: #cf4f8f; }
+.pin.kamera {
+  --pin-bg: #111111;
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 50%;
+}
+.pin.kamera span {
+  font-size: 0;
+}
+.pin.kamera.is-archived {
+  width: 9px !important;
+  height: 9px !important;
+}
+.pin.abschuss { --pin-bg: #ec407a; }
+.pin.abschuss.wild-rehwild { --pin-bg: #4caf50; }
+.pin.abschuss.wild-rotwild { --pin-bg: #e53935; }
+.pin.abschuss.wild-damwild { --pin-bg: #fb8c00; }
+.pin.abschuss.wild-schwarzwild { --pin-bg: #757575; }
+.pin.abschuss.wild-fuchs { --pin-bg: #ff5722; }
+.pin.abschuss.wild-hase { --pin-bg: #8d6e63; }
+.pin.abschuss.wild-ente { --pin-bg: #26a69a; }
+.pin.abschuss.wild-gans { --pin-bg: #5c6bc0; }
+.pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
+.pin.abschuss.wild-sonstiges { --pin-bg: #ec407a; }
 .pin.is-archived {
   width: 18px !important;
   height: 18px !important;
@@ -381,6 +427,37 @@ button:disabled, input:disabled {
   object-fit: cover;
   display: block;
 }
+.detail-thumbs {
+  display: flex;
+  gap: 6px;
+}
+.detail-thumbs .image-thumb {
+  width: 42px;
+  height: 42px;
+}
+.image-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.image-nav-btn {
+  min-height: auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: var(--soft);
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-nav-count {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 32px;
+  text-align: center;
+}
 .image-lightbox {
   position: fixed;
   inset: 0;
@@ -439,6 +516,10 @@ dt { color: var(--muted); }
 dd { margin: 0; text-align: right; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .actions button { padding: 8px 10px; }
+.confirm-actions { display: flex; gap: 8px; margin-top: 8px; }
+.confirm-actions button { flex: 1; padding: 8px 10px; min-height: 38px; border-radius: 6px; border: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.confirm-actions button:not(.primary) { border: 1px solid var(--line); background: #fff; }
+.confirm-text { margin: 4px 0; }
 .related { display: grid; gap: 7px; margin-top: 16px; }
 .related span { padding: 8px 9px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
 
@@ -499,8 +580,49 @@ dd { margin: 0; text-align: right; }
   background: var(--green);
   color: #fff;
 }
+.origin-row .origin-remove {
+  min-height: 38px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4e3df;
+  color: var(--red);
+  font-size: 14px;
+  cursor: pointer;
+}
 .upload-button input {
   display: none;
+}
+.image-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.image-slot {
+  min-height: 38px;
+  border-radius: 4px;
+  background: var(--soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-slot .upload-button {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 13px;
+}
+.image-slot.filled {
+  background: #f4e3df;
+}
+.image-slot .image-remove {
+  min-height: auto;
+  width: auto;
+  padding: 8px;
+  background: transparent;
+  color: var(--red);
 }
 .image-remove {
   min-height: 40px;
@@ -528,6 +650,12 @@ dd { margin: 0; text-align: right; }
   min-height: 38px;
   border-radius: 4px;
   background: var(--soft);
+  color: var(--text);
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 .origin-row .image-remove {
   min-height: 40px;
@@ -620,6 +748,10 @@ dd { margin: 0; text-align: right; }
   justify-content: flex-end;
 }
 
+@media (min-width: 721px) {
+  .tabs { position: absolute; left: 50%; transform: translateX(-50%); }
+}
+
 @media (max-width: 720px) {
   .top { height: auto; min-height: 58px; flex-wrap: wrap; }
   .top strong { width: 100%; }
@@ -648,4 +780,5 @@ dd { margin: 0; text-align: right; }
     max-width: calc(100vw - 16px);
   }
   .filters, .two { grid-template-columns: 1fr; }
+  .modal .two { grid-template-columns: 1fr 1fr; }
 }

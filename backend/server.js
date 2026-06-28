@@ -90,6 +90,20 @@ function setupDb() {
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS kamera (
+      id TEXT PRIMARY KEY,
+      revier_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      position_lat REAL NOT NULL,
+      position_lng REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'aktiv',
+      bild_data TEXT,
+      notiz TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS abschuss (
       id TEXT PRIMARY KEY,
       revier_id TEXT NOT NULL,
@@ -142,7 +156,17 @@ function setupDb() {
   ensureColumn("abschuss", "wind_richtung", "TEXT");
   ensureColumn("abschuss", "wind_speed_kmh", "REAL");
   ensureColumn("abschuss", "bild_data", "TEXT");
+  ensureColumn("abschuss", "bild2", "TEXT");
+  ensureColumn("abschuss", "bild3", "TEXT");
   ensureColumn("kanzel", "bild_data", "TEXT");
+  ensureColumn("kanzel", "bild2", "TEXT");
+  ensureColumn("kanzel", "bild3", "TEXT");
+  ensureColumn("kamera", "bild_data", "TEXT");
+  ensureColumn("kamera", "bild2", "TEXT");
+  ensureColumn("kamera", "bild3", "TEXT");
+  ensureColumn("kamera", "typ", "TEXT");
+  ensureColumn("settings", "show_kameras", "INTEGER DEFAULT 1");
+  ensureColumn("revier", "viewer_passwort_hash", "TEXT");
 }
 
 function ensureColumn(table, column, definition) {
@@ -158,16 +182,22 @@ function ensureSettings(revierId) {
   db.prepare(`
     INSERT INTO settings (
       id, revier_id, show_self_location, show_kanzeln,
-      show_abschuesse, show_archived, show_reviergrenze
-    ) VALUES (?, ?, 1, 1, 1, 0, 1)
+      show_kameras, show_abschuesse, show_archived, show_reviergrenze
+    ) VALUES (?, ?, 1, 1, 1, 1, 0, 1)
   `).run(id(), revierId);
   return db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
 }
 
 function requireAuth(req, res, next) {
-  const revierId = sessions.get(req.cookies.jagd_session);
-  if (!revierId) return res.status(401).json({ error: "Nicht angemeldet" });
-  req.revierId = revierId;
+  const session = sessions.get(req.cookies.jagd_session);
+  if (!session) return res.status(401).json({ error: "Nicht angemeldet" });
+  req.revierId = typeof session === "string" ? session : session.revierId;
+  req.role = typeof session === "string" ? "admin" : session.role;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (req.role !== "admin") return res.status(403).json({ error: "Keine Berechtigung" });
   next();
 }
 
@@ -200,15 +230,20 @@ app.post("/api/login", (req, res) => {
       }
     }
 
-    if (!bcrypt.compareSync(passwort, revier.passwort_hash)) {
+    const adminOk = bcrypt.compareSync(passwort, revier.passwort_hash);
+    const viewerOk = revier.viewer_passwort_hash ? bcrypt.compareSync(passwort, revier.viewer_passwort_hash) : false;
+
+    if (!adminOk && !viewerOk) {
       return res.status(401).json({ error: "Login falsch" });
     }
+
+    const role = adminOk ? "admin" : "viewer";
     ensureSettings(revier.id);
 
     const token = crypto.randomBytes(32).toString("base64url");
-    sessions.set(token, revier.id);
+    sessions.set(token, { revierId: revier.id, role });
     res.cookie("jagd_session", token, { httpOnly: true, sameSite: "lax" });
-    res.json({ ok: true });
+    res.json({ ok: true, role });
   } catch (error) {
     fail(res, error);
   }
@@ -220,26 +255,49 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/revier", requireAuth, (req, res) => {
-  res.json({
-    revier: db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId),
-  });
-});
-
 app.get("/api/map-data", requireAuth, (req, res) => {
   res.json({
-    revier: db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId),
+    revier: db.prepare("SELECT id, name, reviergrenze, viewer_passwort_hash IS NOT NULL AS has_viewer_passwort FROM revier WHERE id = ?").get(req.revierId),
     settings: ensureSettings(req.revierId),
+    role: req.role,
     kanzeln: db.prepare("SELECT * FROM kanzel WHERE revier_id = ? ORDER BY name").all(req.revierId),
+    kameras: db.prepare("SELECT * FROM kamera WHERE revier_id = ? ORDER BY name").all(req.revierId),
     abschuesse: db.prepare("SELECT * FROM abschuss WHERE revier_id = ? ORDER BY datum DESC, created_at DESC").all(req.revierId),
     schuetzen: db.prepare("SELECT DISTINCT schuetz_name FROM abschuss WHERE revier_id = ? AND schuetz_name != '' ORDER BY schuetz_name").all(req.revierId).map((row) => row.schuetz_name),
   });
+});
+
+app.get("/api/revier", requireAuth, (req, res) => {
+  res.json({
+    revier: db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId),
+});
+});
+
+app.patch("/api/revier", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const name = clean(req.body.name);
+    if (!name) throw new Error("Name fehlt");
+    const existing = db.prepare("SELECT id FROM revier WHERE name = ? AND id != ?").get(name, req.revierId);
+    if (existing) throw new Error("Name bereits vergeben");
+    const values = { name, updated_at: now() };
+    const passwort = clean(req.body.passwort);
+    if (passwort) values.passwort_hash = bcrypt.hashSync(passwort, 12);
+    if ("viewer_passwort" in req.body) {
+      values.viewer_passwort_hash = req.body.viewer_passwort ? bcrypt.hashSync(clean(req.body.viewer_passwort), 12) : null;
+    }
+    const set = Object.keys(values).map((k) => `${k} = ?`).join(", ");
+    db.prepare(`UPDATE revier SET ${set} WHERE id = ?`).run(...Object.values(values), req.revierId);
+    res.json({ ok: true });
+  } catch (error) {
+    fail(res, error);
+  }
 });
 
 app.post("/api/settings", requireAuth, (req, res) => {
   const allowed = [
     "show_self_location",
     "show_kanzeln",
+    "show_kameras",
     "show_abschuesse",
     "show_archived",
     "show_reviergrenze",
@@ -252,13 +310,12 @@ app.post("/api/settings", requireAuth, (req, res) => {
     values[key] = key.startsWith("show_") ? (req.body[key] ? 1 : 0) : optional(req.body[key]);
   }
   if (!Object.keys(values).length) return res.json({ ok: true });
-  ensureSettings(req.revierId);
   const set = Object.keys(values).map((key) => `${key} = ?`).join(", ");
   db.prepare(`UPDATE settings SET ${set} WHERE revier_id = ?`).run(...Object.values(values), req.revierId);
   res.json({ ok: true });
 });
 
-app.post("/api/kanzeln", requireAuth, (req, res) => {
+app.post("/api/kanzeln", requireAuth, requireAdmin, (req, res) => {
   try {
     const name = clean(req.body.name);
     if (!name) throw new Error("Name fehlt");
@@ -269,8 +326,8 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
     db.prepare(`
       INSERT INTO kanzel (
         id, revier_id, name, typ, position_lat, position_lng,
-        status, bild_data, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, bild_data, bild2, bild3, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
@@ -280,6 +337,8 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
       lng,
       itemStatus(req.body.status),
       optional(req.body.bild_data),
+      optional(req.body.bild2),
+      optional(req.body.bild3),
       optional(req.body.notiz),
       stamp,
       stamp
@@ -290,7 +349,41 @@ app.post("/api/kanzeln", requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/abschuesse", requireAuth, (req, res) => {
+app.post("/api/kameras", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const name = clean(req.body.name);
+    if (!name) throw new Error("Name fehlt");
+    const lat = num(req.body.position_lat, "Position");
+    const lng = num(req.body.position_lng, "Position");
+    const stamp = now();
+    const itemId = id();
+    db.prepare(`
+      INSERT INTO kamera (
+        id, revier_id, name, typ, position_lat, position_lng,
+        status, bild_data, bild2, bild3, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      itemId,
+      req.revierId,
+      name,
+      optional(req.body.typ),
+      lat,
+      lng,
+      itemStatus(req.body.status),
+      optional(req.body.bild_data),
+      optional(req.body.bild2),
+      optional(req.body.bild3),
+      optional(req.body.notiz),
+      stamp,
+      stamp
+    );
+    res.status(201).json({ id: itemId });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/abschuesse", requireAuth, requireAdmin, (req, res) => {
   try {
     const datum = clean(req.body.datum) || now().slice(0, 10);
     const uhrzeit = clean(req.body.uhrzeit);
@@ -307,8 +400,8 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       INSERT INTO abschuss (
         id, revier_id, kanzel_id, position_lat, position_lng, schuss_lat,
         schuss_lng, schuss_kanzel_id, datum, uhrzeit, wildart, geschlecht, alter_text,
-        schuetz_name, gewicht_kg, wetter, wind, bild_data, status, notiz, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        schuetz_name, gewicht_kg, wetter, wind, bild_data, bild2, bild3, status, notiz, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       itemId,
       req.revierId,
@@ -328,6 +421,8 @@ app.post("/api/abschuesse", requireAuth, (req, res) => {
       optional(req.body.wetter),
       optional(req.body.wind),
       optional(req.body.bild_data),
+      optional(req.body.bild2),
+      optional(req.body.bild3),
       itemStatus(req.body.status),
       optional(req.body.notiz),
       stamp,
@@ -372,10 +467,12 @@ function remove(table) {
   };
 }
 
-app.patch("/api/kanzeln/:id", requireAuth, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "bild_data", "notiz"]));
-app.patch("/api/abschuesse/:id", requireAuth, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text", "schuetz_name", "gewicht_kg", "wetter", "wind", "bild_data", "status", "notiz"]));
-app.delete("/api/kanzeln/:id", requireAuth, remove("kanzel"));
-app.delete("/api/abschuesse/:id", requireAuth, remove("abschuss"));
+app.patch("/api/kanzeln/:id", requireAuth, requireAdmin, patch("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "bild_data", "bild2", "bild3", "notiz"]));
+app.patch("/api/kameras/:id", requireAuth, requireAdmin, patch("kamera", ["name", "typ", "position_lat", "position_lng", "status", "bild_data", "bild2", "bild3", "notiz"]));
+app.patch("/api/abschuesse/:id", requireAuth, requireAdmin, patch("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng", "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text", "schuetz_name", "gewicht_kg", "wetter", "wind", "bild_data", "bild2", "bild3", "status", "notiz"]));
+app.delete("/api/kanzeln/:id", requireAuth, requireAdmin, remove("kanzel"));
+app.delete("/api/kameras/:id", requireAuth, requireAdmin, remove("kamera"));
+app.delete("/api/abschuesse/:id", requireAuth, requireAdmin, remove("abschuss"));
 
 app.use(express.static(distDir));
 app.get("*", (_req, res) => {
