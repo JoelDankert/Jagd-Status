@@ -118,6 +118,12 @@ function formatWind(item) {
   return [item?.wind_richtung, speed].filter(Boolean).join(", ");
 }
 
+function imageSrc(value) {
+  if (!value) return null;
+  if (value.startsWith("data:")) return value;
+  return `/api/images/${value}`;
+}
+
 function readImage(file) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve("");
@@ -276,6 +282,7 @@ function useLongPressClear(clear) {
 
 function App() {
   const [data, setData] = useState(null);
+  const [theme, setTheme] = useState(() => localStorage.getItem("jagd-theme") || "light");
   const [loginError, setLoginError] = useState("");
   const [view, setView] = useState("map");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -294,6 +301,11 @@ function App() {
   useEffect(() => {
     load().catch(() => setData(null));
   }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("jagd-theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!data) return undefined;
@@ -367,7 +379,7 @@ function App() {
           <button className={view === "map" ? "active" : ""} onClick={() => showView("map")}><MapIcon size={17} />Karte</button>
           <button className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
         </nav>
-        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} />
+        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
       </header>
 
       {view === "map" ? (
@@ -402,24 +414,34 @@ function App() {
 function Login({ error, onLogin }) {
   const [name, setName] = useState("");
   const [passwort, setPasswort] = useState("");
+  const [loading, setLoading] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await onLogin({ name, passwort });
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <main className="login">
-      <form onSubmit={(e) => { e.preventDefault(); onLogin({ name, passwort }); }}>
+      <form onSubmit={submit}>
         <div className="login-head">
           <span className="login-badge">{name.charAt(0).toUpperCase() || "J"}</span>
           <h1>{name || "Jagd"}</h1>
           <p>Revierverwaltung</p>
         </div>
-        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" /></label>
-        <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" /></label>
-        <button className="primary" type="submit">Anmelden</button>
+        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" disabled={loading} /></label>
+        <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" disabled={loading} /></label>
+        <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Anmelden</button>
         <p className="error">{error}</p>
       </form>
     </main>
   );
 }
 
-function HeaderMenu({ onLogout, onAccount, isViewer }) {
+function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
   useEffect(() => {
@@ -435,6 +457,7 @@ function HeaderMenu({ onLogout, onAccount, isViewer }) {
       <button type="button" className="quiet" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>...</button>
       {open ? createPortal((
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
+          <button type="button" onClick={() => { setOpen(false); setTheme(theme === "light" ? "dark" : "light"); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
@@ -672,21 +695,28 @@ function FlyToSelection({ data, selected }) {
 }
 
 function SettingsPanel({ data, load, close }) {
-  const [pending, setPending] = useState("");
-  const save = async (key, value) => {
-    setPending(key);
+  const [local, setLocal] = useState({ ...data.settings });
+  const [saving, setSaving] = useState(false);
+  const s = data.settings;
+  const dirty = Object.keys(local).some((k) => local[k] !== s[k]);
+  const apply = async () => {
+    setSaving(true);
     try {
-      await api("/api/settings", { method: "POST", body: { [key]: value } });
+      const body = {};
+      for (const key of Object.keys(local)) {
+        if (local[key] !== s[key]) body[key] = local[key];
+      }
+      if (Object.keys(body).length) await api("/api/settings", { method: "POST", body });
       await load();
+      close();
     } catch {
       await load().catch(() => {});
-    } finally {
-      setPending("");
+      setSaving(false);
     }
   };
-  const s = data.settings;
-  const clearFrom = useLongPressClear(() => save("map_date_filter_from", ""));
-  const clearTo = useLongPressClear(() => save("map_date_filter_to", ""));
+  const toggle = (key) => setLocal((prev) => ({ ...prev, [key]: prev[key] ? 0 : 1 }));
+  const clearFrom = useLongPressClear(() => { setLocal((prev) => ({ ...prev, map_date_filter_from: "" })); });
+  const clearTo = useLongPressClear(() => { setLocal((prev) => ({ ...prev, map_date_filter_to: "" })); });
   return (
     <div className="overlay">
       <section className="modal small">
@@ -697,11 +727,14 @@ function SettingsPanel({ data, load, close }) {
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
           ["show_archived", "Archivierte"],
-        ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={pending === key} checked={Boolean(Number(s[key]))} onChange={(e) => save(key, e.target.checked)} />{label}{pending === key ? <span className="mini-loader" /> : null}</label>)}
+        ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <div className="two">
-          <label><span className="label-line">Von{pending === "map_date_filter_from" ? <span className="mini-loader" /> : null}</span><input type="date" disabled={pending === "map_date_filter_from"} value={s.map_date_filter_from || ""} onChange={(e) => save("map_date_filter_from", e.target.value)} {...clearFrom} /></label>
-          <label><span className="label-line">Bis{pending === "map_date_filter_to" ? <span className="mini-loader" /> : null}</span><input type="date" disabled={pending === "map_date_filter_to"} value={s.map_date_filter_to || ""} onChange={(e) => save("map_date_filter_to", e.target.value)} {...clearTo} /></label>
+          <label>Von<input type="date" disabled={saving} value={local.map_date_filter_from || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} {...clearFrom} /></label>
+          <label>Bis<input type="date" disabled={saving} value={local.map_date_filter_to || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} {...clearTo} /></label>
         </div>
+        <button className={`primary ${saving ? "is-loading" : ""}`} type="button" disabled={!dirty || saving} onClick={apply}>
+          {saving ? "Speichert" : "Übernehmen"}
+        </button>
       </section>
     </div>
   );
@@ -1044,7 +1077,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
       setActionLoading("");
     }
   };
-  const detailImages = [item.bild_data, item.bild2, item.bild3].filter(Boolean);
+  const detailImages = [item.bild_data, item.bild2, item.bild3].map(imageSrc).filter(Boolean);
   return (
     <aside className="detail">
       <header>
