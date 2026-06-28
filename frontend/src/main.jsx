@@ -85,6 +85,20 @@ const WILDART_KLASSEN = {
   Sonstiges: "wild-sonstiges",
 };
 
+const MARKER_TYPEN = ["Wildkamera", "Kirrung", "Salzlecke", "Futterstelle", "Wasserstelle", "Suhle", "Sonstiges"];
+
+const KANZEL_TYPEN = ["Hochsitz", "Ansitzkanzel", "Ansitzleiter", "Drückjagdstand", "Schlafkanzel", "Fahrbare Kanzel", "Bodensitz", "Sonstiges"];
+
+const MARKER_FARBE = {
+  Wildkamera: "#2e7d32",
+  Kirrung: "#ad6a18",
+  Salzlecke: "#8c8c8c",
+  Futterstelle: "#9e7d27",
+  Wasserstelle: "#1a6d8a",
+  Suhle: "#5d4037",
+  Sonstiges: "#c2185b",
+};
+
 const WETTER_CODES = {
   0: "klar",
   1: "überwiegend klar",
@@ -235,15 +249,17 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const pulseCount = 8;
   const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
   const pulseEnd = pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
-  const pulsePeak = pulse ? Math.min(6, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
-  const pulseStyle = pulse ? `<style>@keyframes ${pulseName}{0%{opacity:0;transform:scale(.9)}${pulsePeak}%{opacity:.96;transform:scale(.92)}${pulseEnd}%{opacity:0;transform:scale(2.05)}100%{opacity:0;transform:scale(2.05)}}</style>` : "";
+  const pulsePeak = pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
+  const pulseStyle = pulse ? `<style>@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(3.5)}100%{opacity:0;transform:scale(3.5)}}</style>` : "";
   const pulseHtml = pulse ? `${pulseStyle}${Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
     return `<i class="pin-pulse" style="animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms"></i>`;
   }).join("")}` : "";
+  const markerColor = type === "kamera" && item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "";
+  const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: `${pulseHtml}<span>${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
+    html: `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -292,9 +308,10 @@ function App() {
   const [originPick, setOriginPick] = useState(null);
   const [selfPos, setSelfPos] = useState(null);
   const [listTab, setListTab] = useState("kanzeln");
-  const [filters, setFilters] = useState({ q: "", showArchived: false, from: "", to: "" });
+  const [filters, setFilters] = useState({ q: "", showArchived: true, from: "", to: "" });
   const [accountOpen, setAccountOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [mapLayer, setMapLayer] = useState(() => localStorage.getItem("jagd-layer") || "sat");
 
   const load = async () => setData(await api("/api/map-data"));
 
@@ -306,6 +323,10 @@ function App() {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("jagd-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("jagd-layer", mapLayer);
+  }, [mapLayer]);
 
   useEffect(() => {
     if (!data) return undefined;
@@ -365,8 +386,10 @@ function App() {
     try {
       await api("/api/login", { method: "POST", body });
       setLoginError("");
+      localStorage.setItem("jagd-credentials", JSON.stringify(body));
       await load();
     } catch (error) {
+      localStorage.removeItem("jagd-credentials");
       setLoginError(error.message);
     }
   }} />;
@@ -379,7 +402,7 @@ function App() {
           <button className={view === "map" ? "active" : ""} onClick={() => showView("map")}><MapIcon size={17} />Karte</button>
           <button className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
         </nav>
-        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
+        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); localStorage.removeItem("jagd-credentials"); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
       </header>
 
       {view === "map" ? (
@@ -394,6 +417,8 @@ function App() {
           setSelfPos={setSelfPos}
           openSettings={openSettings}
           isViewer={isViewer}
+          mapLayer={mapLayer}
+          setMapLayer={setMapLayer}
         />
       ) : (
         <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} setConfirmAction={setConfirmAction} />
@@ -414,7 +439,8 @@ function App() {
 function Login({ error, onLogin }) {
   const [name, setName] = useState("");
   const [passwort, setPasswort] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const tried = useRef(false);
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -424,6 +450,19 @@ function Login({ error, onLogin }) {
       setLoading(false);
     }
   };
+  useEffect(() => {
+    if (tried.current) return;
+    tried.current = true;
+    const saved = (() => { try { return JSON.parse(localStorage.getItem("jagd-credentials")); } catch { return null; } })();
+    if (saved?.name && saved?.passwort) {
+      setName(saved.name);
+      setPasswort(saved.passwort);
+      onLogin({ name: saved.name, passwort: saved.passwort })
+        .catch(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, []);
   return (
     <main className="login">
       <form onSubmit={submit}>
@@ -514,7 +553,7 @@ function ConfirmDialog({ message, hint, onConfirm, onCancel }) {
   );
 }
 
-function MapInit({ center }) {
+function MapInit({ center, mapLayer }) {
   const map = useMap();
   const done = useRef(false);
   useEffect(() => {
@@ -526,17 +565,32 @@ function MapInit({ center }) {
     map.on("zoomend", onZoom);
     return () => map.off("zoomend", onZoom);
   }, []);
+  useEffect(() => {
+    if (!done.current) return;
+    const timer = setTimeout(() => {
+      const z = map.getZoom();
+      map.invalidateSize({ animate: false });
+      map.setZoom(z === 22 ? z - 1 : z + 1, { animate: false });
+      requestAnimationFrame(() => map.setZoom(z, { animate: false }));
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [mapLayer]);
   return null;
 }
 
-function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer }) {
+function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer, mapLayer, setMapLayer }) {
   const visible = useVisibleData(data);
   const center = markerCenter([...visible.kanzeln, ...visible.kameras, ...visible.abschuesse]);
+  const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
   return (
-    <main className="map-shell">
+    <main className="map-shell" data-layer={mapLayer}>
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} className="map">
-        <MapInit center={center} />
-        <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
+        <MapInit center={center} mapLayer={mapLayer} />
+        {mapLayer === "osm" ? (
+          <TileLayer key="osm" attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
+        ) : (
+          <TileLayer key="sat" attribution="&copy; Esri" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
+        )}
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         <FlyToSelection data={data} selected={selected} />
@@ -580,7 +634,10 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
-      <button className="map-settings icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
+      <div className="map-top-right">
+        <button className="icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
+        <button className="icon-button" type="button" onClick={toggleLayer} title={mapLayer === "osm" ? "Satellit" : "Karte"}><MapIcon size={18} /></button>
+      </div>
     </main>
   );
 }
@@ -645,8 +702,8 @@ function MapTools({ setSelfPos }) {
         setLocating(false);
       },
       (err) => {
-        const secureError = /secure|https|http/i.test(err.message || "");
-        setError(secureError ? "Browser blockiert Position über HTTP" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
+        const blocked = !window.isSecureContext || /secure|https|http/i.test(err.message || "");
+        setError(blocked ? "Position nur über HTTPS" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
         setLocating(false);
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
@@ -747,7 +804,7 @@ function CreateWindow({ point, close, openForm }) {
         <header><h2>Erstellen</h2><button type="button" onClick={close}><X size={18} /></button></header>
         <div className="two">
           <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
-          <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Kamera</button>
+          <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Markierung</button>
         </div>
         <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
       </section>
@@ -758,9 +815,12 @@ function CreateWindow({ point, close, openForm }) {
 function initialFormValues(form) {
   const item = form.item || {};
   if (form.type === "kanzel") {
+    const typ = item.typ || "";
+    const isBuiltin = KANZEL_TYPEN.includes(typ);
     return {
       name: item.name || "",
-      typ: item.typ || "",
+      typ: isBuiltin ? typ : (typ ? "Sonstiges" : ""),
+      typ_sonstiges: isBuiltin ? "" : (typ || ""),
       bild_data: item.bild_data || "",
       bild2: item.bild2 || "",
       bild3: item.bild3 || "",
@@ -768,19 +828,25 @@ function initialFormValues(form) {
     };
   }
   if (form.type === "kamera") {
+    const typ = item.typ || "";
+    const isBuiltin = MARKER_TYPEN.includes(typ);
     return {
       name: item.name || "",
-      typ: item.typ || "",
+      typ: isBuiltin ? typ : (typ ? "Sonstiges" : ""),
+      typ_sonstiges: isBuiltin ? "" : (typ || ""),
       bild_data: item.bild_data || "",
       bild2: item.bild2 || "",
       bild3: item.bild3 || "",
       notiz: item.notiz || "",
     };
   }
+  const wildart = item.wildart || "";
+  const isBuiltinWild = WILDARTEN.includes(wildart);
   return {
     datum: item.datum || today(),
     uhrzeit: item.uhrzeit || (form.item ? "" : currentTime()),
-    wildart: item.wildart || "",
+    wildart: isBuiltinWild ? wildart : (wildart ? "Sonstiges" : ""),
+    wildart_sonstiges: isBuiltinWild ? "" : (wildart || ""),
     geschlecht: geschlechtValue(item.geschlecht),
     alter_text: item.alter_text || "",
     schuetz_name: item.schuetz_name || "",
@@ -882,6 +948,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setError("");
     try {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
+      if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
+      delete body.typ_sonstiges;
+      if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = body.wildart_sonstiges;
+      delete body.wildart_sonstiges;
       const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : "/api/abschuesse";
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
       await load();
@@ -895,46 +965,48 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" onSubmit={submit}>
-        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Kamera" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
         <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} />
         {form.type === "kanzel" || form.type === "kamera" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Typ<input value={values.typ} onChange={(e) => set("typ", e.target.value)} /></label>
+            {form.type === "kamera" ? (
+              <>
+                <label>Typ<select value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{MARKER_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+              </>
+            ) : (
+              <>
+                <label>Typ<select value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{KANZEL_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+              </>
+            )}
             <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
           </>
         ) : (
           <>
-            <div className="two">
-              <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((wildart) => <option key={wildart} value={wildart}>{wildart}</option>)}</select></label>
-              <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
-            </div>
-            <div className="two">
-              <label>Alter (Jahre)<input inputMode="decimal" value={values.alter_text} onChange={(e) => set("alter_text", e.target.value)} /></label>
-              <label>Gewicht (kg)<input inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
-            </div>
-            <div className="two">
-              <label>Zeitpunkt<span className="native-date-time date-time-split">
-                <span className="date-time-pair">
-                  <button type="button" className="date-time-trigger" onClick={() => {
-                    if (datePickerRef.current) datePickerRef.current.value = values.datum || today();
-                    openNativePicker(datePickerRef.current);
-                  }}>{values.datum || today()}</button>
-                  <input ref={datePickerRef} className="native-picker" type="date" onChange={(e) => set("datum", e.target.value)} />
-                </span>
-                <span className="date-time-pair">
-                  <button type="button" className="date-time-trigger" onContextMenu={(e) => { e.preventDefault(); set("uhrzeit", ""); }} onClick={() => activateTimePicker()}>{values.uhrzeit || "--:--"}</button>
-                  <input ref={timePickerRef} className="native-picker" type="time" onChange={(e) => set("uhrzeit", e.target.value)} />
-                </span>
-              </span></label>
-              <label>Schütze<input list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
-            </div>
-
+            <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((w) => <option key={w} value={w}>{w}</option>)}</select></label>
+            {values.wildart === "Sonstiges" ? <label><input value={values.wildart_sonstiges || ""} onChange={(e) => set("wildart_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+            <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
+            <label>Alter (Jahre)<input inputMode="decimal" value={values.alter_text} onChange={(e) => set("alter_text", e.target.value)} /></label>
+            <label>Gewicht (kg)<input inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
+            <label>Zeitpunkt<span className="native-date-time date-time-split">
+              <span className="date-time-pair">
+                <button type="button" className="date-time-trigger" onClick={() => {
+                  if (datePickerRef.current) datePickerRef.current.value = values.datum || today();
+                  openNativePicker(datePickerRef.current);
+                }}>{values.datum || today()}</button>
+                <input ref={datePickerRef} className="native-picker" type="date" onChange={(e) => set("datum", e.target.value)} />
+              </span>
+              <span className="date-time-pair">
+                <button type="button" className="date-time-trigger" onContextMenu={(e) => { e.preventDefault(); set("uhrzeit", ""); }} onClick={() => activateTimePicker()}>{values.uhrzeit || "--:--"}</button>
+                <input ref={timePickerRef} className="native-picker" type="time" onChange={(e) => set("uhrzeit", e.target.value)} />
+              </span>
+            </span></label>
+            <label>Schütze<input list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
-            <div className="two">
-              <label>Wetter<span className="field-with-button"><input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
-              <label>Wind<span className="field-with-button"><input value={values.wind} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
-            </div>
+            <label>Wetter<span className="field-with-button"><input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
+            <label>Wind<span className="field-with-button"><input value={values.wind} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
             <label>Schussort<select value={selectedKanzelId} onChange={(e) => {
               const id = e.target.value;
               setSelectedKanzelId(id);
@@ -1302,7 +1374,7 @@ function singular(tab) {
 
 function label(tab) {
   if (tab === "kanzeln") return "Kanzeln";
-  if (tab === "kameras") return "Kameras";
+  if (tab === "kameras") return "Markierungen";
   return "Abschüsse";
 }
 

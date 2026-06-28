@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -558,16 +560,48 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(distDir, "index.html"));
 });
 
-const server = app.listen(port, host, () => {
-  console.log(`Jagd-App läuft auf http://${host}:${port}`);
-});
+const SSL_DIR = "/etc/letsencrypt/live/revierverwaltung.duckdns.org";
+let sslOptions = null;
+try {
+  sslOptions = {
+    cert: fs.readFileSync(path.join(SSL_DIR, "fullchain.pem")),
+    key: fs.readFileSync(path.join(SSL_DIR, "privkey.pem")),
+  };
+} catch {}
 
-function shutdown() {
-  server.close(() => {
-    db.close();
-    process.exit(0);
+if (sslOptions) {
+  const httpsServer = https.createServer(sslOptions, app);
+  const redirectApp = express();
+  redirectApp.use((req, res) => {
+    res.redirect(301, `https://${req.hostname}${req.url}`);
   });
-}
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+  httpsServer.listen(443, () => {
+    console.log("HTTPS läuft auf Port 443");
+  });
+  http.createServer(redirectApp).listen(80, () => {
+    console.log("HTTP→HTTPS Redirect auf Port 80");
+  });
+  app.listen(port, "0.0.0.0", () => {});
+  const servers = [httpsServer];
+  const shutdown = () => {
+    httpsServer.close(() => {
+      db.close();
+      process.exit(0);
+    });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+} else {
+  const server = app.listen(port, host, () => {
+    console.log(`Jagd-App läuft auf http://${host}:${port}`);
+  });
+  const shutdown = () => {
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}

@@ -266,6 +266,15 @@ button:disabled, input:disabled {
   top: 12px;
   z-index: 700;
 }
+.map-top-right {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .map-tools button.loading { color: var(--green); }
 .map-tools button.loading svg { display: none; }
 .map-tools button.loading::after {
@@ -323,7 +332,7 @@ button:disabled, input:disabled {
   height: 100%;
   z-index: 0;
   border-radius: 50%;
-  background: radial-gradient(circle, transparent 0 36%, rgba(218, 83, 72, .58) 39% 100%);
+  background: radial-gradient(circle, transparent 0 5%, rgba(255, 60, 60, .92) 8% 55%, transparent 62%);
   pointer-events: none;
 }
 .pin.kanzel {
@@ -331,7 +340,6 @@ button:disabled, input:disabled {
   --pin-bg: #111111;
 }
 .pin.kamera {
-  --pin-bg: #111111;
   width: 12px !important;
   height: 12px !important;
   border-radius: 50%;
@@ -353,7 +361,7 @@ button:disabled, input:disabled {
 .pin.abschuss.wild-ente { --pin-bg: #26a69a; }
 .pin.abschuss.wild-gans { --pin-bg: #5c6bc0; }
 .pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
-.pin.abschuss.wild-sonstiges { --pin-bg: #ec407a; }
+.pin.abschuss.wild-sonstiges { --pin-bg: #c2185b; }
 .pin.is-archived {
   width: 18px !important;
   height: 18px !important;
@@ -370,8 +378,8 @@ button:disabled, input:disabled {
   border: 3px solid #fff;
 }
 .self-marker {
-  width: 18px !important;
-  height: 18px !important;
+  width: 24px !important;
+  height: 24px !important;
   border-radius: 50%;
   background: #1f72ff;
   border: 3px solid #fff;
@@ -503,7 +511,7 @@ button:disabled, input:disabled {
   cursor: grab;
   will-change: transform;
 }
-.detail header button, .modal header button { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 7px; background: var(--soft); }
+.detail header button, .modal header button { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 7px; background: var(--soft); color: var(--text); }
 .detail header .image-thumb {
   width: 66px;
   height: 66px;
@@ -795,7 +803,8 @@ dd { margin: 0; text-align: right; }
 }
 [data-theme="dark"] html, [data-theme="dark"] body { background: var(--bg); color: var(--text); }
 [data-theme="dark"] .leaflet-container { background: #1a1d1a; }
-[data-theme="dark"] .leaflet-tile { filter: brightness(.65) invert(1) hue-rotate(180deg) saturate(.5); }
+[data-theme="dark"] [data-layer="osm"] .leaflet-tile,
+[data-theme="dark"] .map-shell:not([data-layer]) .leaflet-tile { filter: brightness(.65) invert(1) hue-rotate(180deg) saturate(.5); }
 [data-theme="dark"] .leaflet-control-zoom a,
 [data-theme="dark"] .leaflet-control-zoom a:hover { background: var(--panel); color: var(--text); border-color: var(--line); }
 [data-theme="dark"] input,
