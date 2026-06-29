@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import { Layers, List, LocateFixed, Map as MapIcon, Settings, Trash2, X } from "lucide-react";
+import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
@@ -33,6 +33,13 @@ const DURCHHAUSEN_CENTER = [48.0392, 8.6747];
 const IMAGE_MAX_ZOOM = 8;
 const MAX_PULSE_BPM = 150;
 const MIN_PULSE_BPM = 20;
+const ACTIVITY_PULSE_COUNT = 8;
+const ACTIVITY_BASE_ZOOM = 14;
+const ACTIVITY_BASE_DIAMETER_PX = 60;
+const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
+const ACTIVITY_PING_RADIUS_METERS = Math.round(
+  (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DURCHHAUSEN_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
+);
 
 function currentTime() {
   const date = new Date();
@@ -241,25 +248,63 @@ function shotPulseTiming(item) {
   };
 }
 
+function aktivitaetPulseTiming(item) {
+  if (!item) return null;
+  const created = new Date(item.created_at).getTime();
+  const durationMs = ((item.dauer_tage || 3) * 24 + (item.dauer_stunden || 0)) * 3600000;
+  const age = Math.max(0, Date.now() - created);
+  const remainingMs = Math.max(0, durationMs - age);
+  if (remainingMs <= 0) return null;
+  const progress = age / durationMs;
+  const bpm = 40 + 80 * Math.pow(1 - progress, 1.25);
+  return {
+    cycleMs: Math.round(60000 / bpm),
+  };
+}
+
+function destinationPoint(lat, lng, meters, bearingDegrees) {
+  const radius = 6371008.8;
+  const angularDistance = meters / radius;
+  const bearing = (Number(bearingDegrees) * Math.PI) / 180;
+  const lat1 = (Number(lat) * Math.PI) / 180;
+  const lng1 = (Number(lng) * Math.PI) / 180;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angularDistance) +
+    Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
+  );
+  const lng2 = lng1 + Math.atan2(
+    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+    Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return [(lat2 * 180) / Math.PI, (((lng2 * 180) / Math.PI + 540) % 360) - 180];
+}
+
 const markerIcon = (type, item = null, archived = false, pulse = null) => {
+  const isActivity = type === "aktivitaet";
   const kameraSize = archived ? 9 : 12;
   const otherSize = archived ? 18 : 25;
-  const size = type === "kamera" ? kameraSize : otherSize;
-  const pulseName = pulse ? `shot-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
-  const pulseCount = 8;
+  const size = type === "kamera" ? kameraSize : isActivity ? 60 : otherSize;
+  const pulseName = pulse ? `${isActivity ? "act" : "shot"}-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
+  const pulseCount = isActivity ? 8 : 8;
   const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
-  const pulseEnd = pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
-  const pulsePeak = pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
-  const pulseStyle = pulse ? `<style>@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(3.5)}100%{opacity:0;transform:scale(3.5)}}</style>` : "";
-  const pulseHtml = pulse ? `${pulseStyle}${Array.from({ length: pulseCount }, (_, index) => {
+  const pulseScale = isActivity ? "1.4" : "3.5";
+  const pulseEnd = !isActivity && pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
+  const pulsePeak = !isActivity && pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
+  const pulseKeyframes = isActivity
+    ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}4%{opacity:1;transform:scale(0)}100%{opacity:0;transform:scale(${pulseScale})}}`
+    : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
+  const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
+  const dirStyle = isActivity && item?.richtung_grad != null ? `transform:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
+  const pulseHtml = pulse ? `${pulseStyle}<div style="width:100%;height:100%;overflow:visible;display:grid;place-items:center;${dirStyle}">${Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
-    return `<i class="pin-pulse" style="animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms"></i>`;
-  }).join("")}` : "";
-  const markerColor = type === "kamera" && item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "";
+    return `<i class="pin-pulse" style="opacity:0;animation:${pulseName} ${loopMs}ms ease-out infinite;animation-delay:${start}ms"></i>`;
+  }).join("")}</div>` : "";
+  const markerColor = type === "kamera" && item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : isActivity ? "#1e88e5" : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
+  const labelHtml = "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
+    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -303,12 +348,18 @@ function App() {
   const [view, setView] = useState("map");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [animateMove, setAnimateMove] = useState(true);
   const [createAt, setCreateAt] = useState(null);
   const [form, setForm] = useState(null);
   const [originPick, setOriginPick] = useState(null);
   const [selfPos, setSelfPos] = useState(null);
   const [listTab, setListTab] = useState("kanzeln");
-  const [filters, setFilters] = useState({ q: "", showArchived: true, from: "", to: "" });
+  const [filters, setFilters] = useState({
+    q: "",
+    showArchived: true,
+    from: localStorage.getItem("jagd-date-from") || "",
+    to: localStorage.getItem("jagd-date-to") || "",
+  });
   const [accountOpen, setAccountOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [mapLayer, setMapLayer] = useState(() => localStorage.getItem("jagd-layer") || "sat");
@@ -419,9 +470,11 @@ function App() {
           isViewer={isViewer}
           mapLayer={mapLayer}
           setMapLayer={setMapLayer}
+          animateMove={animateMove}
+          setAnimateMove={setAnimateMove}
         />
       ) : (
-        <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} setConfirmAction={setConfirmAction} />
+        <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} setConfirmAction={setConfirmAction} setAnimateMove={setAnimateMove} />
       )}
 
       {settingsOpen && !originPick && <SettingsPanel data={data} load={load} close={() => setSettingsOpen(false)} isViewer={isViewer} />}
@@ -578,13 +631,14 @@ function MapInit({ center, mapLayer }) {
   return null;
 }
 
-function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer, mapLayer, setMapLayer }) {
+function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer, mapLayer, setMapLayer, animateMove, setAnimateMove }) {
   const visible = useVisibleData(data);
   const center = markerCenter([...visible.kanzeln, ...visible.kameras, ...visible.abschuesse]);
   const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
+  const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} doubleClickZoom={false} className="map">
         <MapInit center={center} mapLayer={mapLayer} />
         {mapLayer === "osm" ? (
           <TileLayer key="osm" attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
@@ -593,7 +647,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         )}
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
-        <FlyToSelection data={data} selected={selected} />
+        <FlyToSelection data={data} selected={selected} animate={animateMove} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
         {originPick ? <PickTarget originPick={originPick} /> : null}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
@@ -605,7 +659,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
                 if (originPick) setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
-                else openSelection({ type: "kanzel", id: kanzel.id });
+                else flyToSelection({ type: "kanzel", id: kanzel.id });
               },
             }}
           />
@@ -618,7 +672,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-                openSelection({ type: "kamera", id: kamera.id });
+                flyToSelection({ type: "kamera", id: kamera.id });
               },
             }}
           />
@@ -628,9 +682,16 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             key={abschuss.id}
             position={[abschuss.position_lat, abschuss.position_lng]}
             icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss))}
-            eventHandlers={{ click: () => openSelection({ type: "abschuss", id: abschuss.id }) }}
+            eventHandlers={{ click: () => flyToSelection({ type: "abschuss", id: abschuss.id }) }}
           />
         )) : null}
+        {data.aktivitaeten?.map((aktivitaet) => (
+          <ActivityMarker
+            key={aktivitaet.id}
+            aktivitaet={aktivitaet}
+            onClick={() => flyToSelection({ type: "aktivitaet", id: aktivitaet.id })}
+          />
+        ))}
         {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
@@ -642,12 +703,70 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   );
 }
 
+function ActivityMarker({ aktivitaet, onClick }) {
+  const map = useMap();
+  const pulse = aktivitaetPulseTiming(aktivitaet);
+  const [layout, setLayout] = useState(null);
+
+  useEffect(() => {
+    const lat = Number(aktivitaet.position_lat);
+    const lng = Number(aktivitaet.position_lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+
+    const update = () => {
+      const center = map.latLngToLayerPoint([lat, lng]);
+      const east = map.latLngToLayerPoint(destinationPoint(lat, lng, ACTIVITY_PING_RADIUS_METERS, 90));
+      const radiusPx = Math.max(1, center.distanceTo(east));
+      setLayout({ x: center.x, y: center.y, size: radiusPx * 2 });
+    };
+
+    update();
+    map.on("zoom move viewreset resize", update);
+    return () => map.off("zoom move viewreset resize", update);
+  }, [aktivitaet.position_lat, aktivitaet.position_lng, map]);
+
+  const pane = map.getPanes().overlayPane;
+  if (!pane || !layout) return null;
+
+  const loopMs = pulse ? pulse.cycleMs * ACTIVITY_PULSE_COUNT : 0;
+  const direction = aktivitaet.richtung_grad !== null && aktivitaet.richtung_grad !== undefined && aktivitaet.richtung_grad !== ""
+    ? `${Number(aktivitaet.richtung_grad) - 90}deg`
+    : "0deg";
+
+  return createPortal((
+    <div
+      className="activity-ripple-overlay"
+      style={{ left: layout.x, top: layout.y, width: layout.size, height: layout.size, "--activity-direction": direction }}
+      onClick={(event) => { event.stopPropagation(); onClick(); }}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {pulse ? (
+        <div className="activity-ripple-inner">
+          {Array.from({ length: ACTIVITY_PULSE_COUNT }, (_, index) => (
+            <i
+              key={`${aktivitaet.id}-pulse-${index}`}
+              className="pin-pulse"
+              style={{ animationDuration: `${loopMs}ms`, animationDelay: `${index * pulse.cycleMs}ms` }}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  ), pane);
+}
+
 function MapEvents({ openCreate, originPick, setOriginPick }) {
   const timer = useRef(null);
   const setOrigin = (next) => {
     setOriginPick({ ...originPick, origin: { type: "point", lat: next.lat, lng: next.lng } });
   };
   useMapEvents({
+    dblclick(e) {
+      if (originPick) setOrigin(e.latlng);
+      else openCreate(e.latlng);
+    },
     contextmenu(e) {
       if (originPick) setOrigin(e.latlng);
       else openCreate(e.latlng);
@@ -677,16 +796,29 @@ function MapTools({ setSelfPos }) {
   const ref = useRef(null);
   const [locating, setLocating] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => {
-    if (!ref.current) return;
-    L.DomEvent.disableClickPropagation(ref.current);
-    L.DomEvent.disableScrollPropagation(ref.current);
-  }, []);
-  useEffect(() => {
-    if (!error) return undefined;
-    const timer = setTimeout(() => setError(""), 4500);
-    return () => clearTimeout(timer);
-  }, [error]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef(null);
+  const doSearch = (q) => {
+    if (!q.trim()) { setSearchResults([]); return; }
+    setSearching(true);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&accept-language=de`);
+        if (r.ok) setSearchResults(await r.json());
+        else setSearchResults([]);
+      } catch { setSearchResults([]); }
+      setSearching(false);
+    }, 350);
+  };
+  const selectResult = (item) => {
+    map.flyTo([Number(item.lat), Number(item.lon)], Math.max(map.getZoom(), 14));
+    setSearchOpen(false);
+    setSearchQ("");
+  };
   const locate = () => {
     setError("");
     if (!navigator.geolocation) {
@@ -711,11 +843,25 @@ function MapTools({ setSelfPos }) {
   };
   return (
     <div className="map-tools" ref={ref}>
-      <button type="button" onClick={() => map.zoomIn()} title="Vergrößern">+</button>
-      <button type="button" onClick={() => map.zoomOut()} title="Verkleinern">-</button>
+      <button type="button" onClick={() => setSearchOpen(true)} title="Ort suchen"><Search size={17} /></button>
       <button type="button" onClick={locate} title="Position" className={locating ? "loading" : ""}><LocateFixed size={17} /></button>
       {locating ? <span className="map-status">Sucht...</span> : null}
       {error ? <button type="button" className="map-status error-status" onClick={() => setError("")}>{error}</button> : null}
+      {searchOpen ? createPortal(
+        <div className="overlay" onClick={() => { setSearchOpen(false); setSearchQ(""); }}>
+          <section className="modal small" onClick={(e) => e.stopPropagation()}>
+            <header><h2>Ort suchen</h2><button type="button" onClick={() => { setSearchOpen(false); setSearchQ(""); }}><X size={18} /></button></header>
+            <input autoFocus placeholder="Ortschaft..." value={searchQ} onChange={(e) => { setSearchQ(e.target.value); doSearch(e.target.value); }} />
+            {searchResults.length ? (
+              <div className="search-results">
+                {searchResults.map((r, i) => <button key={i} type="button" onClick={() => selectResult(r)}>{r.display_name}</button>)}
+              </div>
+            ) : null}
+            {searching ? <span className="mini-loader" /> : null}
+          </section>
+        </div>,
+        document.body
+      ) : null}
     </div>
   );
 }
@@ -724,7 +870,7 @@ function ShotLine({ abschuss, data }) {
   const origin = shotOrigin(abschuss, data);
   if (!origin) return null;
   const target = pointOf(abschuss);
-  return <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
+  return <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
 }
 
 function PickTarget({ originPick }) {
@@ -733,12 +879,12 @@ function PickTarget({ originPick }) {
   return (
     <>
       <Marker position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
-      {origin ? <Polyline positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
+      {origin ? <Polyline positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
     </>
   );
 }
 
-function FlyToSelection({ data, selected }) {
+function FlyToSelection({ data, selected, animate }) {
   const map = useMap();
   useEffect(() => {
     const item = findObject(data, selected);
@@ -746,22 +892,38 @@ function FlyToSelection({ data, selected }) {
     const size = map.getSize();
     const target = map.latLngToContainerPoint([item.position_lat, item.position_lng]);
     const center = map.containerPointToLatLng([target.x, target.y + size.y / 4]);
-    map.setView(center, map.getZoom(), { animate: false });
+    if (animate) map.flyTo(center, map.getZoom(), { duration: 0.8 });
+    else map.setView(center, map.getZoom(), { animate: false });
   }, [selected?.id]);
   return null;
 }
 
 function SettingsPanel({ data, load, close }) {
-  const [local, setLocal] = useState({ ...data.settings });
+  const [local, setLocal] = useState({
+    ...data.settings,
+    map_date_filter_from: localStorage.getItem("jagd-date-from") || data.settings.map_date_filter_from || "",
+    map_date_filter_to: localStorage.getItem("jagd-date-to") || data.settings.map_date_filter_to || "",
+  });
   const [saving, setSaving] = useState(false);
   const s = data.settings;
-  const dirty = Object.keys(local).some((k) => local[k] !== s[k]);
+  const effFrom = localStorage.getItem("jagd-date-from") || s.map_date_filter_from || "";
+  const effTo = localStorage.getItem("jagd-date-to") || s.map_date_filter_to || "";
+  const dirty = Object.keys(local).some((k) => {
+    if (k === "map_date_filter_from") return local.map_date_filter_from !== effFrom;
+    if (k === "map_date_filter_to") return local.map_date_filter_to !== effTo;
+    return local[k] !== s[k];
+  });
   const apply = async () => {
     setSaving(true);
     try {
       const body = {};
       for (const key of Object.keys(local)) {
-        if (local[key] !== s[key]) body[key] = local[key];
+        if (key === "map_date_filter_from" || key === "map_date_filter_to") {
+          localStorage.setItem(`jagd-date-${key.replace("map_date_filter_", "")}`, local[key] || "");
+          if (local[key] !== s[key]) body[key] = local[key];
+        } else if (local[key] !== s[key]) {
+          body[key] = local[key];
+        }
       }
       if (Object.keys(body).length) await api("/api/settings", { method: "POST", body });
       await load();
@@ -806,7 +968,10 @@ function CreateWindow({ point, close, openForm }) {
           <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
           <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Markierung</button>
         </div>
-        <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
+        <div className="two">
+          <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
+          <button type="button" className="choice" onClick={() => openForm({ type: "aktivitaet", point })}>Aktivität</button>
+        </div>
       </section>
     </div>
   );
@@ -838,6 +1003,14 @@ function initialFormValues(form) {
       bild2: item.bild2 || "",
       bild3: item.bild3 || "",
       notiz: item.notiz || "",
+    };
+  }
+  if (form.type === "aktivitaet") {
+    return {
+      name: item.name || "",
+      dauer_tage: item.dauer_tage ?? 3,
+      dauer_stunden: item.dauer_stunden ?? 0,
+      richtung_grad: item.richtung_grad ?? "",
     };
   }
   const wildart = item.wildart || "";
@@ -899,7 +1072,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     set(key, "");
   };
   const origin = originPick?.formId === formId ? originPick.origin : null;
-  const picking = originPick?.formId === formId && !originPick.origin;
+  const picking = originPick?.formId === formId && !originPick.origin && originPick.mode !== "richtung";
   const editing = form.mode === "edit";
   const fillWeather = (target) => {
     if (form.type !== "abschuss") return;
@@ -931,16 +1104,17 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     openNativePicker(timePickerRef.current);
   };
   useEffect(() => {
-    if (!origin) return;
+    const o = originPick?.formId === formId ? originPick?.origin : null;
+    if (!o || o.type === "richtung") return;
     setOriginLabel("Punkt gewählt");
     setValues((current) => ({
       ...current,
-      schuss_lat: origin.lat ?? "",
-      schuss_lng: origin.lng ?? "",
+      schuss_lat: o.lat ?? "",
+      schuss_lng: o.lng ?? "",
       schuss_kanzel_id: "",
     }));
     setOriginPick(null);
-  }, [origin?.lat, origin?.lng, origin?.id, origin?.type, setOriginPick]);
+  }, [originPick, formId, setOriginPick]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -952,7 +1126,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
       delete body.typ_sonstiges;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = body.wildart_sonstiges;
       delete body.wildart_sonstiges;
-      const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : "/api/abschuesse";
+      const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : form.type === "aktivitaet" ? "/api/aktivitaeten" : "/api/abschuesse";
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
       await load();
     } catch (err) {
@@ -965,8 +1139,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" onSubmit={submit}>
-        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} />
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : form.type === "aktivitaet" ? "Aktivität" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        {form.type !== "aktivitaet" ? <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} /> : null}
         {form.type === "kanzel" || form.type === "kamera" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
@@ -981,7 +1155,26 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                 {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
               </>
             )}
-            <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
+            <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
+          </>
+        ) : form.type === "aktivitaet" ? (
+          <>
+            <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
+            <label>Dauer<div className="two">
+              <label>Tage<input type="number" min="0" max="30" value={values.dauer_tage} onChange={(e) => set("dauer_tage", Number(e.target.value))} /></label>
+              <label>Stunden<input type="number" min="0" max="23" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", Number(e.target.value))} /></label>
+            </div></label>
+            <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
+              <option value="">Keine</option>
+              <option value="0">N</option>
+              <option value="45">NO</option>
+              <option value="90">O</option>
+              <option value="135">SO</option>
+              <option value="180">S</option>
+              <option value="225">SW</option>
+              <option value="270">W</option>
+              <option value="315">NW</option>
+            </select></label>
           </>
         ) : (
           <>
@@ -1031,13 +1224,32 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                 <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung frei wählen</button>
               )}
             </div>
-            <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
+            <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         )}
         <p className="error">{error}</p>
         <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving}>{saving ? "Speichert" : "Speichern"}</button>
       </form>
     </div>
+  );
+}
+
+function NoteField({ value, onChange }) {
+  const [fullscreen, setFullscreen] = useState(false);
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  return (
+    <>
+      <label>Bemerkungen<textarea value={value} onChange={(e) => onChange(e.target.value)} onFocus={() => isMobile && setFullscreen(true)} /></label>
+      {fullscreen ? createPortal(
+        <div className="overlay" onClick={() => setFullscreen(false)}>
+          <div className="modal small" onClick={(e) => e.stopPropagation()}>
+            <header><h2>Bemerkungen</h2><button type="button" onClick={() => setFullscreen(false)}><X size={18} /></button></header>
+            <textarea autoFocus value={value} onChange={(e) => onChange(e.target.value)} style={{ minHeight: "30vh" }} />
+          </div>
+        </div>,
+        document.body
+      ) : null}
+    </>
   );
 }
 
@@ -1173,7 +1385,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
       {!isViewer ? (
         <div className="actions">
           <button type="button" disabled={Boolean(actionLoading)} onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
-          <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+          {selected.type !== "aktivitaet" ? <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button> : null}
           <button type="button" disabled={Boolean(actionLoading)} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: "Oft ist es besser, das Element zu archivieren.", action: del })}><Trash2 size={16} />Löschen</button>
         </div>
       ) : null}
@@ -1183,7 +1395,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
           <div
             className="image-stage"
             ref={stageRef}
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event) => { event.stopPropagation(); if (transformRef.current.scale <= 1) setImageOpen(false); }}
             onWheel={(event) => {
               event.preventDefault();
               zoomImageAt(event.clientX, event.clientY, transformRef.current.scale + (event.deltaY < 0 ? 0.45 : -0.45));
@@ -1242,6 +1454,16 @@ function Rows({ selected, item, data }) {
   const origin = selected.type === "abschuss" ? shotOrigin(item, data) : null;
   const distance = selected.type === "abschuss" ? shotDistance(item, data) : null;
   const windText = item.wind || formatWind(item);
+  if (selected.type === "aktivitaet") {
+    return (
+      <dl>
+        <dt>Dauer</dt><dd>{(item.dauer_tage || 0)}T {(item.dauer_stunden || 0)}S</dd>
+        {item.richtung_grad !== null && item.richtung_grad !== undefined ? <><dt>Richtung</dt><dd>{windDirection(Number(item.richtung_grad))}</dd></> : null}
+        <dt>Position</dt><dd>{positionText(item)}</dd>
+        <dt>Erstellt</dt><dd>{new Date(item.created_at).toLocaleString("de")}</dd>
+      </dl>
+    );
+  }
   if (selected.type === "abschuss") {
     return (
       <dl>
@@ -1257,12 +1479,18 @@ function Rows({ selected, item, data }) {
       </dl>
     );
   }
-  return <dl><dt>Name</dt><dd>{item.name}</dd>{item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
+  return <dl>{item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
 }
 
-function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction }) {
-  const clearFrom = useLongPressClear(() => setFilters((current) => ({ ...current, from: "" })));
-  const clearTo = useLongPressClear(() => setFilters((current) => ({ ...current, to: "" })));
+function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction, setAnimateMove }) {
+  const [sortBy, setSortBy] = useState("datum");
+  const [sortDir, setSortDir] = useState("desc");
+  const clearFrom = useLongPressClear(() => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-date-from"); });
+  const clearTo = useLongPressClear(() => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-date-to"); });
+  const sortOptions = [{ key: "datum", label: "Datum" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
+  useEffect(() => {
+    if (tab === "abschuesse") { setSortBy("datum"); setSortDir("desc"); }
+  }, [tab]);
   const items = data[tab]
     .filter((item) => {
       const q = filters.q.toLowerCase();
@@ -1270,22 +1498,37 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       const dateOk = tab !== "abschuesse" || ((!filters.from || item.datum >= filters.from) && (!filters.to || item.datum <= filters.to));
       return statusOk && dateOk && (!q || JSON.stringify(item).toLowerCase().includes(q));
     })
-    .sort((a, b) => tab === "abschuesse"
-      ? compareAbschuss(b, a)
-      : String(a.name || "").localeCompare(String(b.name || ""), "de", { sensitivity: "base" }));
+    .sort((a, b) => {
+      if (sortBy === "datum") return (sortDir === "desc" ? 1 : -1) * compareAbschuss(b, a);
+      const va = a[sortBy] ?? "";
+      const vb = b[sortBy] ?? "";
+      const cmp = typeof va === "number" ? va - vb : String(va).localeCompare(String(vb), "de", { sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
   return (
     <main className="list-screen">
       <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
       <div className="filters">
         <label>Suchen<input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
-        {tab === "abschuesse" ? <label>Von<input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} {...clearFrom} /></label> : null}
-        {tab === "abschuesse" ? <label>Bis<input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} {...clearTo} /></label> : null}
+        {tab === "abschuesse" ? <label>Von<input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-from", v); setFilters({ ...filters, from: v }); }} {...clearFrom} /></label> : null}
+        {tab === "abschuesse" ? <label>Bis<input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-to", v); setFilters({ ...filters, to: v }); }} {...clearTo} /></label> : null}
       </div>
+      {tab === "abschuesse" ? (
+        <label className="sort-label">Sortierung
+        <div className="sort-row">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          {sortOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+        <button type="button" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")} title={sortDir === "asc" ? "Aufsteigend" : "Absteigend"}>
+          {sortDir === "asc" ? "\u2191" : "\u2193"}
+        </button>
+      </div>
+      </label>) : null}
       <section className="rows">{items.map((item) => <article key={item.id} className={item.status === "archiviert" ? "is-archived" : ""}>
         <div><strong>{item.name || item.wildart}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
         <div className="row-actions">
-          <button type="button" onClick={() => { openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
+          <button type="button" onClick={() => { setAnimateMove(false); openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
         </div>
       </article>)}</section>
     </main>
@@ -1296,7 +1539,9 @@ function useVisibleData(data) {
   return useMemo(() => {
     const archived = Number(data.settings.show_archived);
     const active = (item) => archived || item.status !== "archiviert";
-    const date = (item) => (!data.settings.map_date_filter_from || item.datum >= data.settings.map_date_filter_from) && (!data.settings.map_date_filter_to || item.datum <= data.settings.map_date_filter_to);
+    const from = localStorage.getItem("jagd-date-from") || data.settings.map_date_filter_from;
+    const to = localStorage.getItem("jagd-date-to") || data.settings.map_date_filter_to;
+    const date = (item) => (!from || item.datum >= from) && (!to || item.datum <= to);
     return {
       kanzeln: data.kanzeln.filter(active),
       kameras: data.kameras.filter(active),
@@ -1358,6 +1603,7 @@ function findObject(data, selected) {
 function apiName(type) {
   if (type === "kanzel") return "kanzeln";
   if (type === "kamera") return "kameras";
+  if (type === "aktivitaet") return "aktivitaeten";
   return "abschuesse";
 }
 

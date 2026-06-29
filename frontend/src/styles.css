@@ -21,6 +21,13 @@ body {
 button, input, select, textarea { font: inherit; }
 button { border: 0; cursor: pointer; }
 
+a { color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }
+input[type="date"], input[type="time"] { appearance: none; -webkit-appearance: none; }
+
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea { font-size: 16px; }
+}
+
 .login {
   min-height: 100%;
   display: grid;
@@ -175,6 +182,7 @@ textarea { min-height: 80px; resize: vertical; }
   min-height: auto;
   font-size: 14px;
   background: transparent;
+  color: var(--text);
 }
 .header-dropdown button:hover {
   background: var(--soft);
@@ -243,7 +251,7 @@ button:disabled, input:disabled {
 .map-shell { min-height: 0; position: relative; }
 .map { height: 100%; width: 100%; background: var(--bg); }
 .leaflet-tile { filter: saturate(.82) contrast(.98); }
-.leaflet-container { font: inherit; }
+
 .leaflet-control-attribution {
   right: auto !important;
   left: 8px !important;
@@ -362,6 +370,44 @@ button:disabled, input:disabled {
 .pin.abschuss.wild-gans { --pin-bg: #5c6bc0; }
 .pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
 .pin.abschuss.wild-sonstiges { --pin-bg: #c2185b; }
+.pin.aktivitaet {
+  background: transparent;
+  border: 0;
+}
+.pin.aktivitaet span {
+  display: none;
+}
+.pin.aktivitaet .pin-pulse,
+.activity-ripple-overlay .pin-pulse {
+  background: conic-gradient(rgba(30,136,229,.1) 0deg, rgba(30,136,229,.78) 25deg, rgba(30,136,229,.1) 120deg, rgba(30,136,229,.1) 360deg);
+}
+.activity-ripple-overlay {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+.activity-ripple-inner {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  display: grid;
+  place-items: center;
+  transform: rotate(var(--activity-direction, 0deg));
+}
+.activity-ripple-overlay .pin-pulse {
+  opacity: 0;
+  animation-name: activity-ripple;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+}
+@keyframes activity-ripple {
+  0% { opacity: 0; transform: scale(0); }
+  4% { opacity: 1; transform: scale(0); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
 .pin.is-archived {
   width: 18px !important;
   height: 18px !important;
@@ -705,6 +751,21 @@ dd { margin: 0; text-align: right; }
   margin-left: 0;
 }
 
+.search-results {
+  display: grid;
+  gap: 4px;
+}
+.search-results button {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--soft);
+  color: var(--text);
+  font-size: 13px;
+  min-height: auto;
+  width: 100%;
+}
+
 .list-screen { padding: 18px; overflow: auto; }
 .list-screen > * { max-width: 1080px; margin-left: auto; margin-right: auto; }
 .tabs.wide { display: flex; max-width: none; margin-bottom: 14px; }
@@ -754,6 +815,26 @@ dd { margin: 0; text-align: right; }
   gap: 7px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.sort-label {
+  margin-bottom: 12px;
+}
+.sort-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+.sort-row select {
+  flex: 1;
+}
+.sort-row button {
+  min-height: 40px;
+  padding: 0 12px;
+  background: var(--soft);
+  border-radius: 4px;
+  font-size: 18px;
+  color: var(--text);
 }
 
 @media (min-width: 721px) {
@@ -824,4 +905,38 @@ dd { margin: 0; text-align: right; }
 [data-theme="dark"] .setting-row:hover { background: var(--soft); }
 [data-theme="dark"] .confirm-actions button:not(.primary) { background: var(--panel); color: var(--text); }
 [data-theme="dark"] .overlay { background: rgba(0,0,0,.5); }
-[data-theme="dark"] .header-dropdown button { color: var(--text); }
+.note-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+.note-fullscreen-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.note-fullscreen-bar button {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 6px;
+  background: var(--green);
+  color: #fff;
+  font-weight: 600;
+}
+.note-fullscreen textarea {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 16px;
+  font-size: 16px;
+  resize: none;
+  background: var(--panel);
+  color: var(--text);
+}

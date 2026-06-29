@@ -213,6 +213,19 @@ function setupDb() {
       map_date_filter_to TEXT,
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS aktivitaet (
+      id TEXT PRIMARY KEY,
+      revier_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      position_lat REAL NOT NULL,
+      position_lng REAL NOT NULL,
+      dauer_tage INTEGER NOT NULL DEFAULT 3,
+      dauer_stunden INTEGER NOT NULL DEFAULT 0,
+      richtung_grad REAL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
+    );
   `);
   ensureColumn("abschuss", "gewicht_kg", "REAL");
   ensureColumn("abschuss", "geschlecht", "TEXT");
@@ -354,6 +367,18 @@ app.get("/api/map-data", requireAuth, (req, res) => {
   const cached = getCachedMapData(req.revierId);
   if (cached) return res.json(cached);
 
+  const nowMs = Date.now();
+  const aktivitaetenAll = db.prepare("SELECT * FROM aktivitaet WHERE revier_id = ? ORDER BY created_at DESC").all(req.revierId);
+  const aktivitaeten = [];
+  const expired = [];
+  for (const a of aktivitaetenAll) {
+    const created = new Date(a.created_at).getTime();
+    const durationMs = (a.dauer_tage * 24 + a.dauer_stunden) * 3600000;
+    if (nowMs - created > durationMs) expired.push(a.id);
+    else aktivitaeten.push(a);
+  }
+  for (const id of expired) db.prepare("DELETE FROM aktivitaet WHERE id = ?").run(id);
+
   const result = {
     revier: db.prepare("SELECT id, name, reviergrenze, viewer_passwort_hash IS NOT NULL AS has_viewer_passwort FROM revier WHERE id = ?").get(req.revierId),
     settings: ensureSettings(req.revierId),
@@ -362,6 +387,7 @@ app.get("/api/map-data", requireAuth, (req, res) => {
     kameras: db.prepare("SELECT * FROM kamera WHERE revier_id = ? ORDER BY name").all(req.revierId).map(stripRowImages),
     abschuesse: db.prepare("SELECT * FROM abschuss WHERE revier_id = ? ORDER BY datum DESC, created_at DESC").all(req.revierId).map(stripRowImages),
     schuetzen: db.prepare("SELECT DISTINCT schuetz_name FROM abschuss WHERE revier_id = ? AND schuetz_name != '' ORDER BY schuetz_name").all(req.revierId).map((row) => row.schuetz_name),
+    aktivitaeten,
   };
 
   setCachedMapData(req.revierId, result);
@@ -554,6 +580,56 @@ app.patch("/api/abschuesse/:id", requireAuth, requireAdmin,
 app.delete("/api/kanzeln/:id", requireAuth, requireAdmin, removeHandler("kanzel"));
 app.delete("/api/kameras/:id", requireAuth, requireAdmin, removeHandler("kamera"));
 app.delete("/api/abschuesse/:id", requireAuth, requireAdmin, removeHandler("abschuss"));
+
+app.post("/api/aktivitaeten", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const name = clean(req.body.name);
+    if (!name) throw new Error("Name fehlt");
+    const lat = num(req.body.position_lat, "Position");
+    const lng = num(req.body.position_lng, "Position");
+    const dauer_tage = Math.max(0, Math.min(30, Number(req.body.dauer_tage) || 3));
+    const dauer_stunden = Math.max(0, Math.min(23, Number(req.body.dauer_stunden) || 0));
+    const richtung_grad = optionalNum(req.body.richtung_grad);
+    const stamp = now();
+    const itemId = id();
+    db.prepare("INSERT INTO aktivitaet (id, revier_id, name, position_lat, position_lng, dauer_tage, dauer_stunden, richtung_grad, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(itemId, req.revierId, name, lat, lng, dauer_tage, dauer_stunden, richtung_grad, stamp, stamp);
+    invalidateCache(req.revierId);
+    res.status(201).json({ id: itemId });
+  } catch (error) { fail(res, error); }
+});
+
+app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const item = db.prepare("SELECT * FROM aktivitaet WHERE id = ? AND revier_id = ?").get(req.params.id, req.revierId);
+    if (!item) return res.status(404).json({ error: "Nicht gefunden" });
+    const set = {};
+    const vals = [];
+    for (const key of ["name", "dauer_tage", "dauer_stunden", "richtung_grad"]) {
+      if (!(key in req.body)) continue;
+      if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
+      else if (key === "dauer_tage") set.dauer_tage = Math.max(0, Math.min(30, Number(req.body[key]) || 3));
+      else if (key === "dauer_stunden") set.dauer_stunden = Math.max(0, Math.min(23, Number(req.body[key]) || 0));
+      else set.name = clean(req.body[key]);
+    }
+    if (!Object.keys(set).length) return res.json({ ok: true });
+    set.updated_at = now();
+    const cols = Object.keys(set).map((k) => `${k} = ?`).join(", ");
+    const result = db.prepare(`UPDATE aktivitaet SET ${cols} WHERE id = ? AND revier_id = ?`)
+      .run(...Object.values(set), req.params.id, req.revierId);
+    if (!result.changes) return res.status(404).json({ error: "Nicht gefunden" });
+    invalidateCache(req.revierId);
+    res.json({ ok: true });
+  } catch (error) { fail(res, error); }
+});
+
+app.delete("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
+  const item = db.prepare("SELECT * FROM aktivitaet WHERE id = ? AND revier_id = ?").get(req.params.id, req.revierId);
+  if (!item) return res.status(404).json({ error: "Nicht gefunden" });
+  db.prepare("DELETE FROM aktivitaet WHERE id = ? AND revier_id = ?").run(req.params.id, req.revierId);
+  invalidateCache(req.revierId);
+  res.json({ ok: true });
+});
 
 app.use(express.static(distDir));
 app.get("*", (_req, res) => {
