@@ -682,9 +682,9 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         <MapInit center={center} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "osm" ? (
-          <TileLayer key="osm" attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
+          <TileLayer key="osm" attribution={'\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'} url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
         ) : (
-          <TileLayer key="sat" attribution="&copy; Esri" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
+          <TileLayer key="sat" attribution={"\u00a9 Esri"} url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
         )}
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
