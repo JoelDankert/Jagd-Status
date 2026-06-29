@@ -291,15 +291,23 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const pulseEnd = !isActivity && pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
   const pulsePeak = !isActivity && pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
   const pulseKeyframes = isActivity
-    ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}6%{opacity:0;transform:scale(0)}12%{opacity:1;transform:scale(.05)}100%{opacity:0;transform:scale(${pulseScale})}}`
+    ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}100%{opacity:0;transform:scale(${pulseScale})}}`
     : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
   const dirStyle = isActivity && item?.richtung_grad != null ? `transform:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
-  const pulseHtml = pulse ? `${pulseStyle}<div style="width:100%;height:100%;overflow:visible;display:grid;place-items:center;${dirStyle}">${Array.from({ length: pulseCount }, (_, index) => {
+  const pulseIcons = pulse ? Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
-    return `<i class="pin-pulse" style="opacity:0;animation:${pulseName} ${loopMs}ms ease-out infinite;animation-delay:${start}ms"></i>`;
-  }).join("")}</div>` : "";
-  const markerColor = type === "kamera" && item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : isActivity ? "#1e88e5" : "";
+    const hasDir = isActivity && item?.richtung_grad != null;
+    const dirMask = hasDir
+      ? `;-webkit-mask-image:conic-gradient(rgba(0,0,0,0) 0deg,rgba(0,0,0,0) 40deg,rgba(0,0,0,1) 90deg,rgba(0,0,0,0) 140deg,rgba(0,0,0,0) 360deg);mask-image:conic-gradient(rgba(0,0,0,0) 0deg,rgba(0,0,0,0) 40deg,rgba(0,0,0,1) 90deg,rgba(0,0,0,0) 140deg,rgba(0,0,0,0) 360deg)`
+      : "";
+    const animStyle = isActivity
+      ? `animation:${pulseName} ${loopMs}ms linear infinite backwards;animation-delay:${start}ms${dirMask}`
+      : `opacity:0;animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms`;
+    return `<i class="pin-pulse" style="${animStyle}"></i>`;
+  }).join("") : "";
+  const pulseHtml = pulse ? `${pulseStyle}${isActivity ? `<div style="width:100%;height:100%;overflow:visible;display:grid;place-items:center;${dirStyle}">${pulseIcons}</div>` : pulseIcons}` : "";
+  const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   const labelHtml = "";
   return L.divIcon({
@@ -623,7 +631,7 @@ function MapInit({ center, mapLayer }) {
     const timer = setTimeout(() => {
       const z = map.getZoom();
       map.invalidateSize({ animate: false });
-      map.setZoom(z === 22 ? z - 1 : z + 1, { animate: false });
+      map.setZoom(z === map.options.maxZoom ? z - 1 : z + 1, { animate: false });
       requestAnimationFrame(() => map.setZoom(z, { animate: false }));
     }, 80);
     return () => clearTimeout(timer);
@@ -638,7 +646,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} doubleClickZoom={false} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={18} doubleClickZoom={false} className="map">
         <MapInit center={center} mapLayer={mapLayer} />
         {mapLayer === "osm" ? (
           <TileLayer key="osm" attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />

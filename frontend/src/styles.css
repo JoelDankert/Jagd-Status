@@ -381,7 +381,9 @@ button:disabled, input:disabled {
   display: none;
 }
 .pin.aktivitaet .pin-pulse {
-  background: conic-gradient(rgba(30,136,229,0) 0deg, rgba(30,136,229,.78) 90deg, rgba(30,136,229,0) 140deg, rgba(30,136,229,0) 360deg);
+  background: transparent;
+  border: 5px solid rgba(30, 136, 229, .78);
+  border-radius: 50%;
 }
 .pin.is-archived {
   width: 18px !important;
