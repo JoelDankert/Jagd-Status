@@ -637,7 +637,7 @@ function MapInit({ center, mapLayer }) {
     const timer = setTimeout(() => {
       const z = map.getZoom();
       map.invalidateSize({ animate: false });
-      map.setZoom(z === 22 ? z - 1 : z + 1, { animate: false });
+      map.setZoom(z === map.options.maxZoom ? z - 1 : z + 1, { animate: false });
       requestAnimationFrame(() => map.setZoom(z, { animate: false }));
     }, 80);
     return () => clearTimeout(timer);
@@ -678,7 +678,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} doubleClickZoom={false} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} doubleClickZoom={false} className="map">
         <MapInit center={center} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "osm" ? (
@@ -719,21 +719,16 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
           />
         )) : null}
         {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => (
-          <Marker
-            key={abschuss.id}
-            position={[abschuss.position_lat, abschuss.position_lng]}
-            icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss))}
-            eventHandlers={{ click: () => flyToSelection({ type: "abschuss", id: abschuss.id }) }}
-          />
+          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} />
         )) : null}
-        {Number(data.settings.show_aktivitaten) ? data.aktivitaeten?.map((aktivitaet) => (
-          <Marker
+        {data.aktivitaeten?.map((aktivitaet) => (
+          <ActivityMarker
             key={aktivitaet.id}
-            position={[aktivitaet.position_lat, aktivitaet.position_lng]}
-            icon={markerIcon("aktivitaet", aktivitaet, false, aktivitaetPulseTiming(aktivitaet))}
-            eventHandlers={{ click: () => flyToSelection({ type: "aktivitaet", id: aktivitaet.id }) }}
+            aktivitaet={aktivitaet}
+            openSelection={openSelection}
+            setAnimateMove={setAnimateMove}
           />
-        )) : null}
+        ))}
         {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
@@ -1036,7 +1031,6 @@ function SettingsPanel({ data, load, close }) {
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
-          ["show_aktivitaten", "Aktivitäten"],
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <div className="two">
@@ -1212,8 +1206,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setSaving(true);
     setError("");
     try {
-      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng, dauer_tage: 0 };
-      if (form.type === "aktivitaet" && !body.dauer_stunden) body.dauer_stunden = 24;
+      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng, dauer_tage: form.type === "aktivitaet" ? 0 : values.dauer_tage };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = body.wildart_sonstiges;
@@ -1252,7 +1245,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
         ) : form.type === "aktivitaet" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Dauer (Stunden)<input type="text" inputMode="numeric" pattern="[0-9]*" value={values.dauer_stunden || ""} onChange={(e) => set("dauer_stunden", Number(e.target.value) || 0)} /></label>
+            <label>Dauer (Stunden)<input type="number" min="1" max="720" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", Number(e.target.value))} /></label>
             <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
               <option value="">Keine</option>
               <option value="0">N</option>
