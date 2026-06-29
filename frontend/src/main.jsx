@@ -678,13 +678,13 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} className="map">
         <MapInit center={center} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "osm" ? (
-          <TileLayer key="osm" attribution={'\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'} url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
         ) : (
-          <TileLayer key="sat" attribution={"\u00a9 Esri"} url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
+          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
         )}
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
@@ -736,6 +736,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         <button className="icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
         <button className="icon-button" type="button" onClick={toggleLayer} title={mapLayer === "osm" ? "Satellit" : "Karte"}><MapIcon size={18} /></button>
       </div>
+      <div className="map-attribution">{mapLayer === "osm" ? '\u00a9 OpenStreetMap' : '\u00a9 Esri'}</div>
     </main>
   );
 }
