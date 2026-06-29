@@ -208,7 +208,7 @@ function setupDb() {
       show_kanzeln INTEGER NOT NULL DEFAULT 1,
       show_abschuesse INTEGER NOT NULL DEFAULT 1,
       show_archived INTEGER NOT NULL DEFAULT 0,
-      show_reviergrenze INTEGER NOT NULL DEFAULT 1,
+      show_aktivitaten INTEGER NOT NULL DEFAULT 1,
       map_date_filter_from TEXT,
       map_date_filter_to TEXT,
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
@@ -246,6 +246,7 @@ function setupDb() {
   ensureColumn("kamera", "bild3", "TEXT");
   ensureColumn("kamera", "typ", "TEXT");
   ensureColumn("settings", "show_kameras", "INTEGER DEFAULT 1");
+  ensureColumn("settings", "show_aktivitaten", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn("revier", "viewer_passwort_hash", "TEXT");
 }
 
@@ -262,7 +263,7 @@ function ensureSettings(revierId) {
   db.prepare(`
     INSERT INTO settings (
       id, revier_id, show_self_location, show_kanzeln,
-      show_kameras, show_abschuesse, show_archived, show_reviergrenze
+      show_kameras, show_abschuesse, show_archived, show_aktivitaten
     ) VALUES (?, ?, 1, 1, 1, 1, 0, 1)
   `).run(id(), revierId);
   return db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
@@ -434,7 +435,7 @@ app.post("/api/settings", requireAuth, (req, res) => {
     "show_kameras",
     "show_abschuesse",
     "show_archived",
-    "show_reviergrenze",
+    "show_aktivitaten",
     "map_date_filter_from",
     "map_date_filter_to",
   ];
@@ -588,7 +589,7 @@ app.post("/api/aktivitaeten", requireAuth, requireAdmin, (req, res) => {
     const lat = num(req.body.position_lat, "Position");
     const lng = num(req.body.position_lng, "Position");
     const dauer_tage = Math.max(0, Math.min(30, Number(req.body.dauer_tage) || 3));
-    const dauer_stunden = Math.max(0, Math.min(23, Number(req.body.dauer_stunden) || 0));
+    const dauer_stunden = Math.max(1, Math.min(720, Number(req.body.dauer_stunden) || 24));
     const richtung_grad = optionalNum(req.body.richtung_grad);
     const stamp = now();
     const itemId = id();
@@ -608,8 +609,8 @@ app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
     for (const key of ["name", "dauer_tage", "dauer_stunden", "richtung_grad"]) {
       if (!(key in req.body)) continue;
       if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
-      else if (key === "dauer_tage") set.dauer_tage = Math.max(0, Math.min(30, Number(req.body[key]) || 3));
-      else if (key === "dauer_stunden") set.dauer_stunden = Math.max(0, Math.min(23, Number(req.body[key]) || 0));
+      else if (key === "dauer_stunden") set.dauer_stunden = Math.max(1, Math.min(720, Number(req.body[key]) || 24));
+      else if (key === "dauer_tage") set.dauer_tage = Math.max(0, Math.min(30, Number(req.body[key]) || 0));
       else set.name = clean(req.body[key]);
     }
     if (!Object.keys(set).length) return res.json({ ok: true });

@@ -250,6 +250,10 @@ button:disabled, input:disabled {
 
 .map-shell { min-height: 0; position: relative; }
 .map { height: 100%; width: 100%; background: var(--bg); }
+.map.is-map-interacting .shot-line,
+.map.is-map-interacting .pin.aktivitaet {
+  opacity: 0 !important;
+}
 .leaflet-tile { filter: saturate(.82) contrast(.98); }
 
 .leaflet-control-attribution {
@@ -342,6 +346,10 @@ button:disabled, input:disabled {
   border-radius: 50%;
   background: radial-gradient(circle, transparent 0 5%, rgba(255, 60, 60, .92) 8% 55%, transparent 62%);
   pointer-events: none;
+  transform-origin: center;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform, opacity;
 }
 .pin.kanzel {
   border-radius: 7px;

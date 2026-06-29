@@ -36,6 +36,7 @@ const MIN_PULSE_BPM = 20;
 const ACTIVITY_PULSE_COUNT = 8;
 const ACTIVITY_BASE_ZOOM = 14;
 const ACTIVITY_BASE_DIAMETER_PX = 60;
+const ACTIVITY_MAX_DIAMETER_PX = 240;
 const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
 const ACTIVITY_PING_RADIUS_METERS = Math.round(
   (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DURCHHAUSEN_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
@@ -251,14 +252,17 @@ function shotPulseTiming(item) {
 function aktivitaetPulseTiming(item) {
   if (!item) return null;
   const created = new Date(item.created_at).getTime();
-  const durationMs = ((item.dauer_tage || 3) * 24 + (item.dauer_stunden || 0)) * 3600000;
+  const durationMs = ((item.dauer_stunden || 24) + (item.dauer_tage || 0) * 24) * 3600000;
   const age = Math.max(0, Date.now() - created);
   const remainingMs = Math.max(0, durationMs - age);
   if (remainingMs <= 0) return null;
   const progress = age / durationMs;
   const bpm = 40 + 80 * Math.pow(1 - progress, 1.25);
+  const cycleMs = Math.round(60000 / bpm);
+  const fixedAnimMs = 4000;
   return {
-    cycleMs: Math.round(60000 / bpm),
+    cycleMs,
+    pulseCount: Math.max(1, Math.round(fixedAnimMs / cycleMs)),
   };
 }
 
@@ -285,19 +289,21 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const otherSize = archived ? 18 : 25;
   const size = type === "kamera" ? kameraSize : isActivity ? 60 : otherSize;
   const pulseName = pulse ? `${isActivity ? "act" : "shot"}-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
-  const pulseCount = isActivity ? 8 : 8;
-  const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
+  const pulseCount = isActivity && pulse?.pulseCount ? pulse.pulseCount : 8;
+  const loopMs = pulse ? (isActivity ? pulse.cycleMs * pulseCount : pulse.cycleMs * pulseCount) : 0;
   const pulseScale = isActivity ? "1.4" : "3.5";
   const pulseEnd = !isActivity && pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
   const pulsePeak = !isActivity && pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
+  const hasDir = isActivity && item?.richtung_grad != null;
   const pulseKeyframes = isActivity
-    ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}100%{opacity:0;transform:scale(${pulseScale})}}`
+    ? (hasDir
+      ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}100%{opacity:0;transform:scale(${pulseScale})}}`
+      : `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}50%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`)
     : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
   const dirStyle = isActivity && item?.richtung_grad != null ? `transform:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
   const pulseIcons = pulse ? Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
-    const hasDir = isActivity && item?.richtung_grad != null;
     const dirMask = hasDir
       ? `;-webkit-mask-image:conic-gradient(rgba(0,0,0,0) 0deg,rgba(0,0,0,0) 40deg,rgba(0,0,0,1) 90deg,rgba(0,0,0,0) 140deg,rgba(0,0,0,0) 360deg);mask-image:conic-gradient(rgba(0,0,0,0) 0deg,rgba(0,0,0,0) 40deg,rgba(0,0,0,1) 90deg,rgba(0,0,0,0) 140deg,rgba(0,0,0,0) 360deg)`
       : "";
@@ -639,6 +645,32 @@ function MapInit({ center, mapLayer }) {
   return null;
 }
 
+function MapInteractionVisibility() {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    let settleTimer = 0;
+    const showLess = () => {
+      clearTimeout(settleTimer);
+      container.classList.add("is-map-interacting");
+    };
+    const showAll = () => {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => container.classList.remove("is-map-interacting"), 80);
+    };
+
+    map.on("zoomstart", showLess);
+    map.on("zoomend", showAll);
+    return () => {
+      clearTimeout(settleTimer);
+      container.classList.remove("is-map-interacting");
+      map.off("zoomstart", showLess);
+      map.off("zoomend", showAll);
+    };
+  }, [map]);
+  return null;
+}
+
 function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer, mapLayer, setMapLayer, animateMove, setAnimateMove }) {
   const visible = useVisibleData(data);
   const center = markerCenter([...visible.kanzeln, ...visible.kameras, ...visible.abschuesse]);
@@ -646,8 +678,9 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={18} doubleClickZoom={false} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} doubleClickZoom={false} className="map">
         <MapInit center={center} mapLayer={mapLayer} />
+        <MapInteractionVisibility />
         {mapLayer === "osm" ? (
           <TileLayer key="osm" attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
         ) : (
@@ -686,20 +719,16 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
           />
         )) : null}
         {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => (
-          <Marker
-            key={abschuss.id}
-            position={[abschuss.position_lat, abschuss.position_lng]}
-            icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss))}
-            eventHandlers={{ click: () => flyToSelection({ type: "abschuss", id: abschuss.id }) }}
-          />
+          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} />
         )) : null}
-        {data.aktivitaeten?.map((aktivitaet) => (
+        {Number(data.settings.show_aktivitaten) ? data.aktivitaeten?.map((aktivitaet) => (
           <ActivityMarker
             key={aktivitaet.id}
             aktivitaet={aktivitaet}
-            onClick={() => flyToSelection({ type: "aktivitaet", id: aktivitaet.id })}
+            openSelection={openSelection}
+            setAnimateMove={setAnimateMove}
           />
-        ))}
+        ))) : null}
         {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
@@ -711,10 +740,50 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   );
 }
 
-function ActivityMarker({ aktivitaet, onClick }) {
+const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, setAnimateMove }) {
+  const icon = useMemo(
+    () => markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss)),
+    [
+      abschuss.id,
+      abschuss.status,
+      abschuss.wildart,
+      abschuss.datum,
+      abschuss.uhrzeit,
+      abschuss.created_at,
+      abschuss.updated_at,
+    ]
+  );
+  const eventHandlers = useMemo(() => ({
+    click: () => {
+      setAnimateMove(true);
+      openSelection({ type: "abschuss", id: abschuss.id });
+    },
+  }), [abschuss.id, openSelection, setAnimateMove]);
+
+  return (
+    <Marker
+      position={[abschuss.position_lat, abschuss.position_lng]}
+      icon={icon}
+      eventHandlers={eventHandlers}
+    />
+  );
+});
+
+const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSelection, setAnimateMove }) {
   const map = useMap();
   const markerRef = useRef(null);
-  const pulse = aktivitaetPulseTiming(aktivitaet);
+  const clickRef = useRef(null);
+  const pulse = useMemo(
+    () => aktivitaetPulseTiming(aktivitaet),
+    [aktivitaet.created_at, aktivitaet.dauer_stunden, aktivitaet.dauer_tage]
+  );
+
+  useEffect(() => {
+    clickRef.current = () => {
+      setAnimateMove(true);
+      openSelection({ type: "aktivitaet", id: aktivitaet.id });
+    };
+  }, [aktivitaet.id, openSelection, setAnimateMove]);
 
   useEffect(() => {
     const lat = Number(aktivitaet.position_lat);
@@ -725,34 +794,54 @@ function ActivityMarker({ aktivitaet, onClick }) {
       icon: markerIcon("aktivitaet", aktivitaet, false, pulse),
       zIndexOffset: 1000,
     });
-    marker.on("click", onClick);
+    const handleClick = () => clickRef.current?.();
+    marker.on("click", handleClick);
     marker.addTo(map);
     markerRef.current = marker;
+    let frame = 0;
 
-    const updateSize = () => {
+    const setSize = () => {
       const icon = marker.getElement();
       if (!icon) return;
       const center = map.latLngToLayerPoint([lat, lng]);
       const east = map.latLngToLayerPoint(destinationPoint(lat, lng, ACTIVITY_PING_RADIUS_METERS, 90));
-      const size = Math.max(12, center.distanceTo(east) * 2);
+      const size = Math.min(ACTIVITY_MAX_DIAMETER_PX, Math.max(12, center.distanceTo(east) * 2));
       icon.style.setProperty("width", `${size}px`, "important");
       icon.style.setProperty("height", `${size}px`, "important");
       icon.style.marginLeft = `${-size / 2}px`;
       icon.style.marginTop = `${-size / 2}px`;
     };
 
-    updateSize();
-    map.on("zoom zoomend moveend viewreset resize", updateSize);
+    const updateSize = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setSize();
+      });
+    };
+
+    setSize();
+    map.on("zoomend viewreset resize", updateSize);
     return () => {
-      map.off("zoom zoomend moveend viewreset resize", updateSize);
-      marker.off("click", onClick);
+      if (frame) cancelAnimationFrame(frame);
+      map.off("zoomend viewreset resize", updateSize);
+      marker.off("click", handleClick);
       marker.remove();
       if (markerRef.current === marker) markerRef.current = null;
     };
-  }, [aktivitaet, map, onClick, pulse]);
+  }, [
+    aktivitaet.id,
+    aktivitaet.position_lat,
+    aktivitaet.position_lng,
+    aktivitaet.status,
+    aktivitaet.name,
+    aktivitaet.richtung_grad,
+    map,
+    pulse,
+  ]);
 
   return null;
-}
+});
 
 function MapEvents({ openCreate, originPick, setOriginPick }) {
   const timer = useRef(null);
@@ -867,7 +956,7 @@ function ShotLine({ abschuss, data }) {
   const origin = shotOrigin(abschuss, data);
   if (!origin) return null;
   const target = pointOf(abschuss);
-  return <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
+  return <Polyline className="shot-line" positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
 }
 
 function PickTarget({ originPick }) {
@@ -876,7 +965,7 @@ function PickTarget({ originPick }) {
   return (
     <>
       <Marker position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
-      {origin ? <Polyline positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
+      {origin ? <Polyline className="shot-line" positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
     </>
   );
 }
@@ -942,6 +1031,7 @@ function SettingsPanel({ data, load, close }) {
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
+          ["show_aktivitaten", "Aktivitäten"],
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <div className="two">
@@ -1005,8 +1095,7 @@ function initialFormValues(form) {
   if (form.type === "aktivitaet") {
     return {
       name: item.name || "",
-      dauer_tage: item.dauer_tage ?? 3,
-      dauer_stunden: item.dauer_stunden ?? 0,
+      dauer_stunden: item.dauer_stunden ?? 24,
       richtung_grad: item.richtung_grad ?? "",
     };
   }
@@ -1118,7 +1207,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setSaving(true);
     setError("");
     try {
-      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
+      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng, dauer_tage: form.type === "aktivitaet" ? 0 : values.dauer_tage };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = body.wildart_sonstiges;
@@ -1157,10 +1246,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
         ) : form.type === "aktivitaet" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Dauer<div className="two">
-              <label>Tage<input type="number" min="0" max="30" value={values.dauer_tage} onChange={(e) => set("dauer_tage", Number(e.target.value))} /></label>
-              <label>Stunden<input type="number" min="0" max="23" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", Number(e.target.value))} /></label>
-            </div></label>
+            <label>Dauer (Stunden)<input type="number" min="1" max="720" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", Number(e.target.value))} style={{width:"100%"}} /></label>
             <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
               <option value="">Keine</option>
               <option value="0">N</option>
@@ -1454,7 +1540,7 @@ function Rows({ selected, item, data }) {
   if (selected.type === "aktivitaet") {
     return (
       <dl>
-        <dt>Dauer</dt><dd>{(item.dauer_tage || 0)}T {(item.dauer_stunden || 0)}S</dd>
+        <dt>Dauer</dt><dd>{item.dauer_stunden || 0} Stunden</dd>
         {item.richtung_grad !== null && item.richtung_grad !== undefined ? <><dt>Richtung</dt><dd>{windDirection(Number(item.richtung_grad))}</dd></> : null}
         <dt>Position</dt><dd>{positionText(item)}</dd>
         <dt>Erstellt</dt><dd>{new Date(item.created_at).toLocaleString("de")}</dd>
