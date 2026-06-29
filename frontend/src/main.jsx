@@ -291,7 +291,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const pulseEnd = !isActivity && pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
   const pulsePeak = !isActivity && pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
   const pulseKeyframes = isActivity
-    ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}4%{opacity:1;transform:scale(0)}100%{opacity:0;transform:scale(${pulseScale})}}`
+    ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}6%{opacity:0;transform:scale(0)}12%{opacity:1;transform:scale(.05)}100%{opacity:0;transform:scale(${pulseScale})}}`
     : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
   const dirStyle = isActivity && item?.richtung_grad != null ? `transform:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
@@ -705,56 +705,45 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
 
 function ActivityMarker({ aktivitaet, onClick }) {
   const map = useMap();
+  const markerRef = useRef(null);
   const pulse = aktivitaetPulseTiming(aktivitaet);
-  const [layout, setLayout] = useState(null);
 
   useEffect(() => {
     const lat = Number(aktivitaet.position_lat);
     const lng = Number(aktivitaet.position_lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
 
-    const update = () => {
+    const marker = L.marker([lat, lng], {
+      icon: markerIcon("aktivitaet", aktivitaet, false, pulse),
+      zIndexOffset: 1000,
+    });
+    marker.on("click", onClick);
+    marker.addTo(map);
+    markerRef.current = marker;
+
+    const updateSize = () => {
+      const icon = marker.getElement();
+      if (!icon) return;
       const center = map.latLngToLayerPoint([lat, lng]);
       const east = map.latLngToLayerPoint(destinationPoint(lat, lng, ACTIVITY_PING_RADIUS_METERS, 90));
-      const radiusPx = Math.max(1, center.distanceTo(east));
-      setLayout({ x: center.x, y: center.y, size: radiusPx * 2 });
+      const size = Math.max(12, center.distanceTo(east) * 2);
+      icon.style.setProperty("width", `${size}px`, "important");
+      icon.style.setProperty("height", `${size}px`, "important");
+      icon.style.marginLeft = `${-size / 2}px`;
+      icon.style.marginTop = `${-size / 2}px`;
     };
 
-    update();
-    map.on("zoom move viewreset resize", update);
-    return () => map.off("zoom move viewreset resize", update);
-  }, [aktivitaet.position_lat, aktivitaet.position_lng, map]);
+    updateSize();
+    map.on("zoom zoomend moveend viewreset resize", updateSize);
+    return () => {
+      map.off("zoom zoomend moveend viewreset resize", updateSize);
+      marker.off("click", onClick);
+      marker.remove();
+      if (markerRef.current === marker) markerRef.current = null;
+    };
+  }, [aktivitaet, map, onClick, pulse]);
 
-  const pane = map.getPanes().overlayPane;
-  if (!pane || !layout) return null;
-
-  const loopMs = pulse ? pulse.cycleMs * ACTIVITY_PULSE_COUNT : 0;
-  const direction = aktivitaet.richtung_grad !== null && aktivitaet.richtung_grad !== undefined && aktivitaet.richtung_grad !== ""
-    ? `${Number(aktivitaet.richtung_grad) - 90}deg`
-    : "0deg";
-
-  return createPortal((
-    <div
-      className="activity-ripple-overlay"
-      style={{ left: layout.x, top: layout.y, width: layout.size, height: layout.size, "--activity-direction": direction }}
-      onClick={(event) => { event.stopPropagation(); onClick(); }}
-      onDoubleClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      {pulse ? (
-        <div className="activity-ripple-inner">
-          {Array.from({ length: ACTIVITY_PULSE_COUNT }, (_, index) => (
-            <i
-              key={`${aktivitaet.id}-pulse-${index}`}
-              className="pin-pulse"
-              style={{ animationDuration: `${loopMs}ms`, animationDelay: `${index * pulse.cycleMs}ms` }}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  ), pane);
+  return null;
 }
 
 function MapEvents({ openCreate, originPick, setOriginPick }) {

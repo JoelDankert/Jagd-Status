@@ -371,42 +371,17 @@ button:disabled, input:disabled {
 .pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
 .pin.abschuss.wild-sonstiges { --pin-bg: #c2185b; }
 .pin.aktivitaet {
+  width: 60px !important;
+  height: 60px !important;
   background: transparent;
   border: 0;
+  overflow: visible;
 }
 .pin.aktivitaet span {
   display: none;
 }
-.pin.aktivitaet .pin-pulse,
-.activity-ripple-overlay .pin-pulse {
-  background: conic-gradient(rgba(30,136,229,.1) 0deg, rgba(30,136,229,.78) 25deg, rgba(30,136,229,.1) 120deg, rgba(30,136,229,.1) 360deg);
-}
-.activity-ripple-overlay {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  overflow: visible;
-  transform: translate(-50%, -50%);
-  cursor: pointer;
-}
-.activity-ripple-inner {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  display: grid;
-  place-items: center;
-  transform: rotate(var(--activity-direction, 0deg));
-}
-.activity-ripple-overlay .pin-pulse {
-  opacity: 0;
-  animation-name: activity-ripple;
-  animation-timing-function: ease-out;
-  animation-iteration-count: infinite;
-}
-@keyframes activity-ripple {
-  0% { opacity: 0; transform: scale(0); }
-  4% { opacity: 1; transform: scale(0); }
-  100% { opacity: 0; transform: scale(1.4); }
+.pin.aktivitaet .pin-pulse {
+  background: conic-gradient(rgba(30,136,229,0) 0deg, rgba(30,136,229,.78) 90deg, rgba(30,136,229,0) 140deg, rgba(30,136,229,0) 360deg);
 }
 .pin.is-archived {
   width: 18px !important;
