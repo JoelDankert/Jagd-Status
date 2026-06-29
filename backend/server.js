@@ -613,6 +613,7 @@ app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
       else set.name = clean(req.body[key]);
     }
     if (!Object.keys(set).length) return res.json({ ok: true });
+    if ("dauer_stunden" in set) set.created_at = now();
     set.updated_at = now();
     const cols = Object.keys(set).map((k) => `${k} = ?`).join(", ");
     const result = db.prepare(`UPDATE aktivitaet SET ${cols} WHERE id = ? AND revier_id = ?`)

@@ -1246,7 +1246,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
         ) : form.type === "aktivitaet" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Dauer (Stunden)<input type="number" min="1" max="720" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", Number(e.target.value))} /></label>
+            <label>Dauer (Stunden)<input type="number" min="0.1" max="720" step="any" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", e.target.value === "" ? "" : Number(e.target.value))} /></label>
             <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
               <option value="">Keine</option>
               <option value="0">N</option>
@@ -1320,14 +1320,24 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
 function NoteField({ value, onChange }) {
   const [fullscreen, setFullscreen] = useState(false);
   const isMobile = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  const [localValue, setLocalValue] = useState("");
+  const openFullscreen = () => {
+    if (!isMobile) return;
+    setLocalValue(value);
+    setFullscreen(true);
+  };
+  const closeFullscreen = () => {
+    onChange(localValue);
+    setFullscreen(false);
+  };
   return (
     <>
-      <label>Bemerkungen<textarea value={value} onChange={(e) => onChange(e.target.value)} onFocus={() => isMobile && setFullscreen(true)} /></label>
+      <label>Bemerkungen<textarea value={value} onChange={(e) => onChange(e.target.value)} onFocus={openFullscreen} /></label>
       {fullscreen ? createPortal(
-        <div className="overlay" onClick={() => setFullscreen(false)}>
+        <div className="overlay" onClick={closeFullscreen}>
           <div className="modal small" onClick={(e) => e.stopPropagation()}>
-            <header><h2>Bemerkungen</h2><button type="button" onClick={() => setFullscreen(false)}><X size={18} /></button></header>
-            <textarea autoFocus value={value} onChange={(e) => onChange(e.target.value)} style={{ minHeight: "30vh" }} />
+            <header><h2>Bemerkungen</h2><button type="button" onClick={closeFullscreen}><X size={18} /></button></header>
+            <textarea autoFocus value={localValue} onChange={(e) => setLocalValue(e.target.value)} style={{ minHeight: "30vh" }} />
           </div>
         </div>,
         document.body
@@ -1538,9 +1548,13 @@ function Rows({ selected, item, data }) {
   const distance = selected.type === "abschuss" ? shotDistance(item, data) : null;
   const windText = item.wind || formatWind(item);
   if (selected.type === "aktivitaet") {
+    const created = new Date(item.created_at).getTime();
+    const durationMs = ((item.dauer_stunden || 24) + (item.dauer_tage || 0) * 24) * 3600000;
+    const remainingMs = Math.max(0, durationMs - (Date.now() - created));
+    const remainingH = Math.round(remainingMs / 3600000);
     return (
       <dl>
-        <dt>Dauer</dt><dd>{item.dauer_stunden || 0} Stunden</dd>
+        <dt>Dauer</dt><dd>{remainingMs <= 0 ? "abgelaufen" : `${remainingH} Std.`}</dd>
         {item.richtung_grad !== null && item.richtung_grad !== undefined ? <><dt>Richtung</dt><dd>{windDirection(Number(item.richtung_grad))}</dd></> : null}
         <dt>Position</dt><dd>{positionText(item)}</dd>
         <dt>Erstellt</dt><dd>{new Date(item.created_at).toLocaleString("de")}</dd>
