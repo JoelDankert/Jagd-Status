@@ -1010,11 +1010,10 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
-        {mapLayer === "osm" ? (
-          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
-        ) : (
-          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
-        )}
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={18} maxZoom={22} />
+          {mapLayer === "sat" ? (
+          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={19} maxZoom={22} />
+          ) : null}
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
