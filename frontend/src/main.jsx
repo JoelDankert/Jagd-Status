@@ -807,7 +807,7 @@ function AdminPage() {
                   <span>{dateTimeLocal(request.created_at)}</span>
                 </div>
                 <div className="admin-actions">
-                  <button type="button" className="danger" onClick={() => setDeleteRequestConfirm(request)} disabled={loading}>Löschen</button>
+                  <button type="button" className="danger" onClick={() => setDeleteRequestConfirm(request)} disabled={loading}><Trash2 size={16} />Löschen</button>
                   <button type="button" className="quiet" onClick={() => rejectDeleteRequest(request.id)} disabled={loading}>Ablehnen</button>
                 </div>
               </article>
@@ -825,7 +825,7 @@ function AdminPage() {
                   <span>Erstellt {dateTimeLocal(revier.created_at)}</span>
                 </div>
                 <div className="admin-actions">
-                  <button type="button" className="danger" onClick={() => setDeleteConfirm(revier)} disabled={loading}>Löschen</button>
+                  <button type="button" className="danger" onClick={() => setDeleteConfirm(revier)} disabled={loading}><Trash2 size={16} />Löschen</button>
                 </div>
               </article>
             ))}
@@ -931,7 +931,7 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
         <label>Gast-Passwort<input type="password" value={viewerPasswort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
         {error ? <p className="error">{error}</p> : null}
         <button type="submit" className={`primary ${saving ? "is-loading" : ""}`} disabled={saving}>Speichern</button>
-        <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => setDeleteConfirm(true)}>Löschung anfragen</button>
+        <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => setDeleteConfirm(true)}><Trash2 size={16} />Löschung anfragen</button>
       </form>
       {deleteConfirm ? (
         <ConfirmDialog
@@ -1505,10 +1505,8 @@ function SettingsPanel({ data, load, close }) {
           ["show_aktivitaeten", "Aktivitäten"],
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
-        <div className="two">
-          <label>Von<span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />{local.map_date_filter_from ? <button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label>
-          <label>Bis<span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />{local.map_date_filter_to ? <button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label>
-        </div>
+        <label>Von<span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />{local.map_date_filter_from ? <button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label>
+        <label>Bis<span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />{local.map_date_filter_to ? <button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label>
         <button className={`primary ${saving ? "is-loading" : ""}`} type="button" disabled={!dirty || saving} onClick={apply}>
           {saving ? "Speichert" : "Übernehmen"}
         </button>
