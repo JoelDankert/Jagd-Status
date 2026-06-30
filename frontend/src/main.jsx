@@ -1039,7 +1039,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         <MapTools setSelfPos={setSelfPos} />
         {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
         <FlyToSelection data={data} selected={selected} animate={animateMove} />
-        {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} pane={MAP_PANES.lines} />)}
+        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} pane={MAP_PANES.lines} />) : null}
         {originPick && originPick.mode !== "move" ? <PickTarget originPick={originPick} /> : null}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel, i) => (
           <Marker
@@ -1075,7 +1075,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss, i) => (
           <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} pane={MAP_PANES.abschuesse} zIndexOffset={visible.abschuesse.length - i} />
         )) : null}
-        {data.aktivitaeten?.map((aktivitaet) => (
+        {Number(data.settings.show_aktivitaeten) ? data.aktivitaeten?.map((aktivitaet) => (
           <ActivityMarker
             key={aktivitaet.id}
             aktivitaet={aktivitaet}
@@ -1083,7 +1083,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             openSelection={openSelection}
             setAnimateMove={setAnimateMove}
           />
-        ))}
+        )) : null}
         {originPick?.origin?.lat && originPick.mode !== "move" ? <Marker pane={MAP_PANES.pick} position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker pane={MAP_PANES.self} position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
@@ -1502,6 +1502,7 @@ function SettingsPanel({ data, load, close }) {
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
+          ["show_aktivitaeten", "Aktivitäten"],
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <div className="two">
