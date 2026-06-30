@@ -1091,6 +1091,7 @@ dd { margin: 0; text-align: right; }
 [data-theme="dark"] input::placeholder,
 [data-theme="dark"] textarea::placeholder { color: var(--muted); }
 [data-theme="dark"] .danger { background: #4a2828 !important; color: #f08080 !important; }
+[data-theme="dark"] .image-remove { background: #4a2828; color: #f08080; }
 [data-theme="dark"] .origin-row .origin-remove,
 [data-theme="dark"] .image-slot .image-remove { background-color: rgba(61, 32, 32, .86); }
 [data-theme="dark"] .rows article { background: var(--panel); border-color: var(--line); }
