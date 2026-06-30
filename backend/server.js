@@ -189,6 +189,7 @@ function setupDb() {
       revier_id TEXT NOT NULL,
       name TEXT NOT NULL,
       typ TEXT,
+      bauart TEXT,
       position_lat REAL NOT NULL,
       position_lng REAL NOT NULL,
       status TEXT NOT NULL DEFAULT 'aktiv',
@@ -277,6 +278,9 @@ function setupDb() {
   ensureColumn("abschuss", "bild_data", "TEXT");
   ensureColumn("abschuss", "bild2", "TEXT");
   ensureColumn("abschuss", "bild3", "TEXT");
+  ensureColumn("kanzel", "bauart", "TEXT");
+  db.prepare("UPDATE kanzel SET typ = 'Geschlossene Kanzel', bauart = NULL WHERE bauart = 'Geschlossen' AND (typ IS NULL OR typ = '')").run();
+  db.prepare("UPDATE kanzel SET typ = 'Offene Kanzel', bauart = NULL WHERE bauart = 'Offen' AND (typ IS NULL OR typ = '')").run();
   ensureColumn("kanzel", "bild_data", "TEXT");
   ensureColumn("kanzel", "bild2", "TEXT");
   ensureColumn("kanzel", "bild3", "TEXT");

@@ -129,7 +129,7 @@ const WILDART_KLASSEN = {
 
 const MARKER_TYPEN = ["Wildkamera", "Kirrung", "Salzlecke", "Futterstelle", "Wasserstelle", "Suhle", "Sonstiges"];
 
-const KANZEL_TYPEN = ["Hochsitz", "Ansitzkanzel", "Ansitzleiter", "Drückjagdstand", "Schlafkanzel", "Fahrbare Kanzel", "Bodensitz", "Sonstiges"];
+const KANZEL_TYPEN = ["Hochsitz", "Geschlossene Kanzel", "Offene Kanzel", "Ansitzleiter", "Ansitzzelt", "Drückjagdstand", "Schlafkanzel", "Fahrbare Kanzel", "Bodensitz", "Sonstiges"];
 
 const MARKER_FARBE = {
   Wildkamera: "#2e7d32",
