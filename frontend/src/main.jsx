@@ -1184,23 +1184,27 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, pane, op
 
 function MapEvents({ openCreate, originPick, setOriginPick }) {
   const timer = useRef(null);
+  const originPickRef = useRef(originPick);
+  originPickRef.current = originPick;
+  const setOriginPickRef = useRef(setOriginPick);
+  setOriginPickRef.current = setOriginPick;
   const setOrigin = (next) => {
-    setOriginPick({ ...originPick, origin: { type: "point", lat: next.lat, lng: next.lng } });
+    setOriginPickRef.current({ ...originPickRef.current, origin: { type: "point", lat: next.lat, lng: next.lng } });
   };
   useMapEvents({
     dblclick(e) {
-      if (originPick) setOrigin(e.latlng);
+      if (originPickRef.current) setOrigin(e.latlng);
       else openCreate(e.latlng);
     },
     contextmenu(e) {
-      if (originPick) setOrigin(e.latlng);
+      if (originPickRef.current) setOrigin(e.latlng);
       else openCreate(e.latlng);
     },
     click(e) {
-      if (originPick) setOrigin(e.latlng);
+      if (originPickRef.current) setOrigin(e.latlng);
     },
     mousedown(e) {
-      if (originPick) return;
+      if (originPickRef.current) return;
       timer.current = setTimeout(() => openCreate(e.latlng), 700);
     },
     mouseup() {
