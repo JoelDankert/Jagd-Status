@@ -388,7 +388,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   const labelHtml = "";
   return L.divIcon({
-    className: `pin ${type} ${type === "abschuss" ? (WILDART_KLASSEN[item?.wildart] || "wild-sonstiges") + " geschlecht-" + (item?.geschlecht || "offen") : ""} ${archived ? "is-archived" : ""}`,
+    className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
     html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
@@ -1029,7 +1029,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className={`map ${!Number(data.settings.show_geschlecht) ? "hide-gender" : ""}`}>
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "sat" ? (
@@ -1506,7 +1506,6 @@ function SettingsPanel({ data, load, close }) {
           ["show_abschuesse", "Abschüsse"],
           ["show_aktivitaeten", "Aktivitäten"],
           ["show_archived", "Archivierte"],
-          ["show_geschlecht", "Geschlecht andeuten"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <label>Von{local.map_date_filter_from ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />}</label>
         <label>Bis{local.map_date_filter_to ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} /><button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />}</label>
