@@ -445,8 +445,8 @@ function App() {
   const [filters, setFilters] = useState({
     q: "",
     showArchived: true,
-    from: localStorage.getItem("jagd-date-from") || "",
-    to: localStorage.getItem("jagd-date-to") || "",
+    from: localStorage.getItem("jagd-list-date-from") || "",
+    to: localStorage.getItem("jagd-list-date-to") || "",
   });
   const [accountOpen, setAccountOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
@@ -1458,13 +1458,13 @@ function FlyToSelection({ data, selected, animate }) {
 function SettingsPanel({ data, load, close }) {
   const [local, setLocal] = useState({
     ...data.settings,
-    map_date_filter_from: localStorage.getItem("jagd-date-from") || data.settings.map_date_filter_from || "",
-    map_date_filter_to: localStorage.getItem("jagd-date-to") || data.settings.map_date_filter_to || "",
+    map_date_filter_from: localStorage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from || "",
+    map_date_filter_to: localStorage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to || "",
   });
   const [saving, setSaving] = useState(false);
   const s = data.settings;
-  const effFrom = localStorage.getItem("jagd-date-from") || s.map_date_filter_from || "";
-  const effTo = localStorage.getItem("jagd-date-to") || s.map_date_filter_to || "";
+  const effFrom = localStorage.getItem("jagd-map-date-from") || s.map_date_filter_from || "";
+  const effTo = localStorage.getItem("jagd-map-date-to") || s.map_date_filter_to || "";
   const dirty = Object.keys(local).some((k) => {
     if (k === "map_date_filter_from") return local.map_date_filter_from !== effFrom;
     if (k === "map_date_filter_to") return local.map_date_filter_to !== effTo;
@@ -1476,7 +1476,7 @@ function SettingsPanel({ data, load, close }) {
       const body = {};
       for (const key of Object.keys(local)) {
         if (key === "map_date_filter_from" || key === "map_date_filter_to") {
-          localStorage.setItem(`jagd-date-${key.replace("map_date_filter_", "")}`, local[key] || "");
+          localStorage.setItem(`jagd-map-date-${key.replace("map_date_filter_", "")}`, local[key] || "");
           if (local[key] !== s[key]) body[key] = local[key];
         } else if (local[key] !== s[key]) {
           body[key] = local[key];
@@ -1505,8 +1505,8 @@ function SettingsPanel({ data, load, close }) {
           ["show_aktivitaeten", "Aktivitäten"],
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
-        <label>Von{local.map_date_filter_from ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 4 }} onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />}</label>
-        <label>Bis{local.map_date_filter_to ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 4 }} onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />}</label>
+        <label>Von{local.map_date_filter_from ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 6 }} onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />}</label>
+        <label>Bis{local.map_date_filter_to ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 6 }} onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />}</label>
         <button className={`primary ${saving ? "is-loading" : ""}`} type="button" disabled={!dirty || saving} onClick={apply}>
           {saving ? "Speichert" : "Übernehmen"}
         </button>
@@ -2142,8 +2142,8 @@ function Rows({ selected, item, data }) {
 function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction, setAnimateMove }) {
   const [sortBy, setSortBy] = useState("datum");
   const [sortDir, setSortDir] = useState("desc");
-  const clearFrom = () => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-date-from"); };
-  const clearTo = () => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-date-to"); };
+  const clearFrom = () => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-list-date-from"); };
+  const clearTo = () => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-list-date-to"); };
   const sortOptions = [{ key: "datum", label: "Datum" }, { key: "schussdistanz", label: "Schussdistanz" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
   useEffect(() => {
     if (tab === "abschuesse") { setSortBy("datum"); setSortDir("desc"); }
@@ -2179,8 +2179,8 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       <div className="filters">
         <label>Suchen<input value={filters.q} maxLength={INPUT_LIMITS.search} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
-        {tab === "abschuesse" ? <label>Von{filters.from ? <span className="field-with-button"><input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-from", v); setFilters({ ...filters, from: v }); }} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 4 }} onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-from", v); setFilters({ ...filters, from: v }); }} />}</label> : null}
-        {tab === "abschuesse" ? <label>Bis{filters.to ? <span className="field-with-button"><input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-to", v); setFilters({ ...filters, to: v }); }} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 4 }} onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-to", v); setFilters({ ...filters, to: v }); }} />}</label> : null}
+        {tab === "abschuesse" ? <label>Von{filters.from ? <span className="field-with-button"><input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 6 }} onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} />}</label> : null}
+        {tab === "abschuesse" ? <label>Bis{filters.to ? <span className="field-with-button"><input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} /><button type="button" className="danger" style={{ padding: "0 10px", alignSelf: "stretch", borderRadius: 6 }} onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} />}</label> : null}
       </div>
       {tab === "abschuesse" ? (
         <label className="sort-label">Sortierung
@@ -2208,8 +2208,8 @@ function useVisibleData(data) {
   return useMemo(() => {
     const archived = Number(data.settings.show_archived);
     const active = (item) => archived || item.status !== "archiviert";
-    const from = localStorage.getItem("jagd-date-from") || data.settings.map_date_filter_from;
-    const to = localStorage.getItem("jagd-date-to") || data.settings.map_date_filter_to;
+    const from = localStorage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from;
+    const to = localStorage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to;
     const date = (item) => (!from || item.datum >= from) && (!to || item.datum <= to);
     return {
       kanzeln: data.kanzeln.filter(active),
