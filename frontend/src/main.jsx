@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
-import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Pane, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
@@ -49,6 +49,25 @@ const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
 const ACTIVITY_PING_RADIUS_METERS = Math.round(
   (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DEFAULT_MAP_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
 );
+
+const MAP_PANES = {
+  lines: "jagd-lines",
+  kanzeln: "jagd-kanzeln",
+  kameras: "jagd-kameras",
+  abschuesse: "jagd-abschuesse",
+  aktivitaeten: "jagd-aktivitaeten",
+  pick: "jagd-pick",
+  self: "jagd-self",
+};
+const MAP_PANE_STYLES = {
+  [MAP_PANES.lines]: { zIndex: 430, overflow: "visible" },
+  [MAP_PANES.kanzeln]: { zIndex: 610, overflow: "visible" },
+  [MAP_PANES.kameras]: { zIndex: 620, overflow: "visible" },
+  [MAP_PANES.abschuesse]: { zIndex: 630, overflow: "visible" },
+  [MAP_PANES.aktivitaeten]: { zIndex: 600, overflow: "visible" },
+  [MAP_PANES.pick]: { zIndex: 700, overflow: "visible" },
+  [MAP_PANES.self]: { zIndex: 710, overflow: "visible" },
+};
 
 function dateTimeLocal(value) {
   if (!value) return "-";
@@ -164,6 +183,9 @@ function imageSrc(value) {
 function readImage(file) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve("");
+    if (file.type === "image/heic" || file.type === "image/heif" || file.type === "image/heif-sequence") {
+      return reject(new Error("HEIC/HEIF nicht unterstützt – bitte als JPEG aufnehmen"));
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const image = new Image();
@@ -174,14 +196,14 @@ function readImage(file) {
         canvas.width = Math.max(1, Math.round(image.width * scale));
         canvas.height = Math.max(1, Math.round(image.height * scale));
         const context = canvas.getContext("2d");
-        if (!context) return resolve(String(reader.result || ""));
+        if (!context) return reject(new Error("Canvas nicht verfügbar"));
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL("image/jpeg", 0.82));
       };
-      image.onerror = () => resolve(String(reader.result || ""));
+      image.onerror = () => reject(new Error("Bild konnte nicht geladen werden"));
       image.src = String(reader.result || "");
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error("Datei konnte nicht gelesen werden"));
     reader.readAsDataURL(file);
   });
 }
@@ -242,6 +264,16 @@ function markerLetter(value, fallback) {
     .slice(0, 2)
     .join("");
   return letters || fallback;
+}
+
+function markerInitial(value, fallback) {
+  return String(value || "").trim().match(/[\p{L}\p{N}]/u)?.[0]?.toLocaleUpperCase("de") || fallback;
+}
+
+function customWildartValue(value) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  return text.charAt(0).toLocaleUpperCase("de") + text.slice(1).toLocaleLowerCase("de");
 }
 
 function shotPulseTiming(item) {
@@ -316,7 +348,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
       : `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}50%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`)
     : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
-  const dirStyle = isActivity && item?.richtung_grad != null ? `transform:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
+  const dirStyle = isActivity && item?.richtung_grad != null ? `--activity-rotation:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
   const pulseIcons = pulse ? Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
     const dirMask = hasDir
@@ -327,13 +359,13 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
       : `opacity:0;animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms`;
     return `<i class="pin-pulse" style="${animStyle}"></i>`;
   }).join("") : "";
-  const pulseHtml = pulse ? `${pulseStyle}${isActivity ? `<div class="activity-pulse-layer" style="width:100%;height:100%;overflow:visible;display:grid;place-items:center;${dirStyle}">${pulseIcons}</div>` : pulseIcons}` : "";
+  const pulseHtml = pulse ? `${pulseStyle}${isActivity ? `<div class="activity-pulse-layer" style="${dirStyle}">${pulseIcons}</div>` : pulseIcons}` : "";
   const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   const labelHtml = "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
+    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerInitial(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -799,7 +831,7 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
   }, [open]);
   return (
     <div className="header-menu">
-      <button type="button" className="quiet" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>...</button>
+      <button type="button" className="quiet header-menu-btn" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="2"/><circle cx="9" cy="9" r="2"/><circle cx="14" cy="9" r="2"/></svg></button>
       {open ? createPortal((
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
           <button type="button" onClick={() => { setOpen(false); setTheme(theme === "light" ? "dark" : "light"); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
@@ -840,9 +872,21 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
       .catch((err) => setError(err.message))
       .finally(() => setDeleteSaving(false));
   };
+  const requestSave = () => {
+    if (!name.trim()) {
+      setError("Name fehlt");
+      return;
+    }
+    if (adminTouched.current && !passwort.trim()) {
+      setError("Passwort fehlt");
+      return;
+    }
+    setError("");
+    setConfirmAction({ message: "Account-Daten ändern?", action: submit });
+  };
   return (
     <div className="overlay">
-      <form className="modal small" onSubmit={(e) => { e.preventDefault(); setConfirmAction({ message: "Account-Daten ändern?", action: submit }); }}>
+      <form className="modal small" noValidate onSubmit={(e) => { e.preventDefault(); requestSave(); }}>
         <header><h2>Account-Daten ändern</h2><button type="button" onClick={close}><X size={18} /></button></header>
         <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label>Revierpasswort<input type="password" value={passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
@@ -956,12 +1000,14 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         )}
         <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
+        {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
         <FlyToSelection data={data} selected={selected} animate={animateMove} />
-        {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
+        {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} pane={MAP_PANES.lines} />)}
         {originPick ? <PickTarget originPick={originPick} /> : null}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
           <Marker
             key={kanzel.id}
+            pane={MAP_PANES.kanzeln}
             position={[kanzel.position_lat, kanzel.position_lng]}
             icon={markerIcon("kanzel", kanzel, kanzel.status === "archiviert")}
             eventHandlers={{
@@ -976,6 +1022,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         {Number(data.settings.show_kameras) ? visible.kameras.map((kamera) => (
           <Marker
             key={kamera.id}
+            pane={MAP_PANES.kameras}
             position={[kamera.position_lat, kamera.position_lng]}
             icon={markerIcon("kamera", kamera, kamera.status === "archiviert")}
             eventHandlers={{
@@ -987,18 +1034,19 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
           />
         )) : null}
         {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => (
-          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} />
+          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} pane={MAP_PANES.abschuesse} />
         )) : null}
         {data.aktivitaeten?.map((aktivitaet) => (
           <ActivityMarker
             key={aktivitaet.id}
             aktivitaet={aktivitaet}
+            pane={MAP_PANES.aktivitaeten}
             openSelection={openSelection}
             setAnimateMove={setAnimateMove}
           />
         ))}
-        {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
-        {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
+        {originPick?.origin?.lat ? <Marker pane={MAP_PANES.pick} position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
+        {selfPos && Number(data.settings.show_self_location) ? <Marker pane={MAP_PANES.self} position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
       <div className="map-top-right">
         <button className="icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
@@ -1009,7 +1057,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   );
 }
 
-const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, setAnimateMove }) {
+const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, setAnimateMove, pane }) {
   const icon = useMemo(
     () => markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss)),
     [
@@ -1031,6 +1079,7 @@ const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, set
 
   return (
     <Marker
+      pane={pane}
       position={[abschuss.position_lat, abschuss.position_lng]}
       icon={icon}
       eventHandlers={eventHandlers}
@@ -1038,7 +1087,7 @@ const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, set
   );
 });
 
-const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSelection, setAnimateMove }) {
+const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, pane, openSelection, setAnimateMove }) {
   const map = useMap();
   const markerRef = useRef(null);
   const clickRef = useRef(null);
@@ -1061,6 +1110,7 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSele
 
     const marker = L.marker([lat, lng], {
       icon: markerIcon("aktivitaet", aktivitaet, false, pulse),
+      pane,
       zIndexOffset: 1000,
     });
     const handleClick = () => clickRef.current?.();
@@ -1079,8 +1129,6 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSele
       if (!layer) return;
       layer.style.width = `${size}px`;
       layer.style.height = `${size}px`;
-      layer.style.marginLeft = `${(ACTIVITY_HITBOX_PX - size) / 2}px`;
-      layer.style.marginTop = `${(ACTIVITY_HITBOX_PX - size) / 2}px`;
     };
 
     const updateSize = () => {
@@ -1109,6 +1157,7 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSele
     aktivitaet.richtung_grad,
     map,
     pulse,
+    pane,
   ]);
 
   return null;
@@ -1250,11 +1299,11 @@ function MapTools({ setSelfPos }) {
   );
 }
 
-function ShotLine({ abschuss, data }) {
+function ShotLine({ abschuss, data, pane }) {
   const origin = shotOrigin(abschuss, data);
   if (!origin) return null;
   const target = pointOf(abschuss);
-  return <Polyline className="shot-line" positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
+  return <Polyline pane={pane} className="shot-line" positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
 }
 
 function PickTarget({ originPick }) {
@@ -1262,8 +1311,8 @@ function PickTarget({ originPick }) {
   const origin = originPick.origin;
   return (
     <>
-      <Marker position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
-      {origin ? <Polyline className="shot-line" positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
+      <Marker pane={MAP_PANES.pick} position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
+      {origin ? <Polyline pane={MAP_PANES.lines} className="shot-line" positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
     </>
   );
 }
@@ -1462,6 +1511,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     try {
       const key = index === 0 ? "bild_data" : `bild${index + 1}`;
       set(key, await readImage(file));
+    } catch (err) {
+      setError(err.message);
     } finally {
       setImageLoading(null);
     }
@@ -1517,13 +1568,21 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (form.type === "kanzel" || form.type === "kamera") {
+      if (!values.name.trim()) { setError("Name fehlt"); return; }
+    } else if (form.type === "aktivitaet") {
+      if (!values.name.trim()) { setError("Name fehlt"); return; }
+      if (!values.dauer_stunden) { setError("Dauer fehlt"); return; }
+    } else if (form.type === "abschuss") {
+      if (!values.wildart) { setError("Wildart fehlt"); return; }
+    }
     setSaving(true);
     setError("");
     try {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
-      if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = body.wildart_sonstiges;
+      if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
       delete body.wildart_sonstiges;
       const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : form.type === "aktivitaet" ? "/api/aktivitaeten" : "/api/abschuesse";
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
@@ -1537,7 +1596,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
 
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
-      <form className="modal" onSubmit={submit}>
+      <form className="modal" noValidate onSubmit={submit}>
         <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : form.type === "aktivitaet" ? "Aktivität" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {form.type !== "aktivitaet" ? <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} /> : null}
         {form.type === "kanzel" || form.type === "kamera" ? (
@@ -1624,7 +1683,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
           </>
         )}
         <p className="error">{error}</p>
-        <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving}>{saving ? "Speichert" : "Speichern"}</button>
+        <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
       </form>
     </div>
   );

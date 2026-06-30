@@ -28,7 +28,7 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
 const app = express();
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
 
 function id() {
@@ -41,6 +41,26 @@ function now() {
 
 function clean(value) {
   return String(value ?? "").trim();
+}
+
+function revierNameKey(value) {
+  return clean(value).normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("de");
+}
+
+function findRevierByName(name, excludeId = null) {
+  const key = revierNameKey(name);
+  if (!key) return null;
+  const rows = excludeId
+    ? db.prepare("SELECT * FROM revier WHERE id != ?").all(excludeId)
+    : db.prepare("SELECT * FROM revier").all();
+  return rows.find((row) => revierNameKey(row.name) === key) || null;
+}
+
+function findRevierRequestByName(name) {
+  const key = revierNameKey(name);
+  if (!key) return null;
+  return db.prepare("SELECT * FROM revier_request").all()
+    .find((row) => revierNameKey(row.name) === key) || null;
 }
 
 function optional(value) {
@@ -348,13 +368,13 @@ app.post("/api/revier-requests", async (req, res) => {
     const name = clean(req.body.name);
     const passwort = clean(req.body.passwort);
     if (!name || !passwort) throw new Error("Reviername und Passwort fehlen");
-    if (db.prepare("SELECT id FROM revier WHERE name = ?").get(name)) {
+    if (findRevierByName(name)) {
       return res.status(409).json({ error: "Account existiert bereits" });
     }
 
     const stamp = now();
     const passwortHash = await bcrypt.hash(passwort, BCRYPT_ROUNDS);
-    const existing = db.prepare("SELECT id FROM revier_request WHERE name = ?").get(name);
+    const existing = findRevierRequestByName(name);
     if (existing) {
       db.prepare("UPDATE revier_request SET passwort_hash = ?, created_at = ? WHERE id = ?").run(passwortHash, stamp, existing.id);
     } else {
@@ -377,7 +397,7 @@ app.post("/api/admin/requests/:id/approve", (req, res) => {
     if (!requireSystemAdmin(req, res)) return;
     const request = db.prepare("SELECT * FROM revier_request WHERE id = ?").get(req.params.id);
     if (!request) return res.status(404).json({ error: "Registrierung nicht gefunden" });
-    if (db.prepare("SELECT id FROM revier WHERE name = ?").get(request.name)) {
+    if (findRevierByName(request.name)) {
       db.prepare("DELETE FROM revier_request WHERE id = ?").run(request.id);
       return res.status(409).json({ error: "Account existiert bereits" });
     }
@@ -450,7 +470,7 @@ app.post("/api/login", async (req, res) => {
     const name = clean(req.body.name);
     const passwort = clean(req.body.passwort);
     if (!name || !passwort) throw new Error("Login fehlt");
-    const revier = db.prepare("SELECT * FROM revier WHERE name = ?").get(name);
+    const revier = findRevierByName(name);
     if (!revier) {
       return res.status(404).json({ error: "Account nicht vorhanden", code: "account_not_found" });
     }
@@ -548,7 +568,7 @@ app.patch("/api/revier", requireAuth, requireAdmin, async (req, res) => {
   try {
     const name = clean(req.body.name);
     if (!name) throw new Error("Name fehlt");
-    const existing = db.prepare("SELECT id FROM revier WHERE name = ? AND id != ?").get(name, req.revierId);
+    const existing = findRevierByName(name, req.revierId);
     if (existing) throw new Error("Name bereits vergeben");
     const values = { name, updated_at: now() };
     const passwort = clean(req.body.passwort);
@@ -647,8 +667,6 @@ function patchHandler(table, allowed) {
         .get(req.params.id, req.revierId);
       if (!oldItem) return res.status(404).json({ error: "Nicht gefunden" });
 
-      processImageFields(req.body, `${table}_${req.params.id}`);
-
       const values = {};
       for (const key of allowed) {
         if (!(key in req.body)) continue;
@@ -658,10 +676,8 @@ function patchHandler(table, allowed) {
             deleteItemImages({ [key]: oldItem[key] });
             values[key] = null;
           } else if (val && val !== oldItem[key]) {
-            if (val.startsWith("data:")) {
-              deleteItemImages({ [key]: oldItem[key] });
-              values[key] = saveImage(val, `${table}_${req.params.id}`);
-            }
+            deleteItemImages({ [key]: oldItem[key] });
+            values[key] = saveImage(val, `${table}_${req.params.id}`);
           }
         } else if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(key)) {
           values[key] = optionalNum(val);

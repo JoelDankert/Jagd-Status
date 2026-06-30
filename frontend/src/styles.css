@@ -220,12 +220,12 @@ textarea { min-height: 80px; resize: vertical; }
   margin-left: auto;
   position: relative;
 }
-.header-menu > .quiet {
-  padding: 8px 10px;
-  font-size: 20px;
-  line-height: 1;
-  letter-spacing: 1px;
-  font-weight: 800;
+.header-menu-btn {
+  padding: 8px;
+  min-height: unset;
+  width: 36px;
+  height: 36px;
+  color: var(--text);
 }
 .header-dropdown {
   background: var(--soft);
@@ -342,6 +342,10 @@ button:disabled, input:disabled {
 }
 .map.is-map-panning .pin.aktivitaet .pin-pulse {
   animation-play-state: paused !important;
+}
+.leaflet-pane,
+.leaflet-marker-pane {
+  overflow: visible;
 }
 .leaflet-tile { filter: saturate(.82) contrast(.98); }
 
@@ -478,8 +482,15 @@ button:disabled, input:disabled {
   display: none;
 }
 .pin.aktivitaet .activity-pulse-layer {
-  grid-area: 1 / 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  overflow: visible;
   pointer-events: none;
+  transform: translate(-50%, -50%) var(--activity-rotation, rotate(0deg));
+  transform-origin: center;
 }
 .pin.aktivitaet .pin-pulse {
   background: transparent;
