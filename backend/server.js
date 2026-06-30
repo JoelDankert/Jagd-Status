@@ -323,6 +323,7 @@ function setupDb() {
   dropKameraNameColumn();
   ensureColumn("settings", "show_kameras", "INTEGER DEFAULT 1");
   ensureColumn("settings", "show_aktivitaeten", "INTEGER DEFAULT 1");
+  ensureColumn("settings", "show_geschlecht", "INTEGER DEFAULT 1");
   ensureColumn("revier", "viewer_passwort_hash", "TEXT");
   ensureColumn("aktivitaet", "notiz", "TEXT");
 }
@@ -378,8 +379,8 @@ function ensureSettings(revierId) {
   db.prepare(`
     INSERT INTO settings (
       id, revier_id, show_self_location, show_kanzeln,
-      show_kameras, show_abschuesse, show_archived, show_reviergrenze
-    ) VALUES (?, ?, 1, 1, 1, 1, 0, 1)
+      show_kameras, show_abschuesse, show_archived
+    ) VALUES (?, ?, 1, 1, 1, 1, 0)
   `).run(id(), revierId);
   return db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
 }
@@ -676,8 +677,8 @@ app.post("/api/settings", requireAuth, (req, res) => {
     "show_kameras",
     "show_abschuesse",
     "show_aktivitaeten",
+    "show_geschlecht",
     "show_archived",
-    "show_reviergrenze",
     "map_date_filter_from",
     "map_date_filter_to",
   ];

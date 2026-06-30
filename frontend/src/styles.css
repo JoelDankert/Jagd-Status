@@ -514,7 +514,7 @@ button:disabled, input:disabled {
   width: 9px !important;
   height: 9px !important;
 }
-.pin.abschuss { width: 18px !important; height: 18px !important; --pin-bg: #ec407a; }
+.pin.abschuss { width: 18px !important; height: 18px !important; --pin-bg: #ec407a; position: relative; }
 .pin.abschuss.is-archived { width: 14px !important; height: 14px !important; }
 .pin.abschuss span { font-size: 9px; }
 .pin.abschuss.wild-rehwild { --pin-bg: #4caf50; }
@@ -527,6 +527,21 @@ button:disabled, input:disabled {
 .pin.abschuss.wild-gans { --pin-bg: #5c6bc0; }
 .pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
 .pin.abschuss.wild-sonstiges { --pin-bg: #c2185b; }
+.pin .gender-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  z-index: 2;
+  pointer-events: none;
+}
+.pin.is-archived .gender-dot { top: 0; right: 0; width: 3px; height: 3px; }
+.pin .gender-dot.gender-maennlich { background: #42a5f5; }
+.pin .gender-dot.gender-weiblich { background: #ec407a; }
+.pin .gender-dot.gender-offen { display: none; }
+.hide-gender .pin .gender-dot { display: none; }
 .pin.aktivitaet {
   width: 96px !important;
   height: 96px !important;
