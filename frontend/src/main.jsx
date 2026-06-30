@@ -1909,13 +1909,23 @@ function NoteField({ value, onChange }) {
   );
 }
 
+function ImagePreview({ src, className = "" }) {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => setLoaded(false), [src]);
+  if (!src) return null;
+  return <img key={src} className={`${className} ${loaded ? "is-loaded" : ""}`} src={src} alt="" onLoad={() => setLoaded(true)} />;
+}
+
 function ImageSlots({ images, setImage, clearImage, loading }) {
   return (
     <div className="image-slots">
       {[0, 1, 2].map((i) => (
-        <div key={i} className={`image-slot ${images[i] ? "filled" : ""} ${loading === i ? "loading" : ""}`} style={images[i] ? { backgroundImage: `url(${imageSrc(images[i])})` } : undefined}>
+        <div key={i} className={`image-slot ${images[i] ? "filled" : ""} ${loading === i ? "loading" : ""}`}>
           {images[i] ? (
-            <button type="button" className="image-remove" onClick={() => clearImage(i)} aria-label="Bild entfernen"><Trash2 size={16} /></button>
+            <>
+              <ImagePreview src={imageSrc(images[i])} className="image-slot-preview" />
+              <button type="button" className="image-remove" onClick={() => clearImage(i)} aria-label="Bild entfernen"><Trash2 size={16} /></button>
+            </>
           ) : (
             <label className={`upload-button ${loading === i ? "is-loading" : ""}`}>
               {loading === i ? "Lädt" : <>+ Bild {i + 1}</>}
@@ -2025,7 +2035,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
           {detailImages.length ? (
             <div className="detail-thumbs">
               {detailImages.map((src, i) => (
-                <button key={i} type="button" className="image-thumb" onClick={() => { transformRef.current = { scale: 1, x: 0, y: 0 }; setImageIdx(i); setImageOpen(true); }}><img src={src} alt="" /></button>
+                <button key={src} type="button" className="image-thumb" onClick={() => { transformRef.current = { scale: 1, x: 0, y: 0 }; setImageIdx(i); setImageOpen(true); }}><ImagePreview src={src} /></button>
               ))}
             </div>
           ) : null}
@@ -2098,7 +2108,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
               dragRef.current = null;
             }}
           >
-            <img ref={imageRef} src={detailImages[imageIdx]} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
+            <img key={detailImages[imageIdx]} ref={imageRef} src={detailImages[imageIdx]} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
           </div>
         </div>
       ), document.body) : null}
