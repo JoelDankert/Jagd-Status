@@ -348,19 +348,6 @@ button:disabled, input:disabled {
 .icon-button, .map-tools button, .map-settings { width: 38px; padding: 0; }
 .primary { width: 100%; font-weight: 700; margin-top: 10px; }
 .danger { background: #f4e3df !important; color: var(--red) !important; }
-.icon-btn {
-  min-height: auto;
-  width: auto;
-  padding: 6px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.danger-icon {
-  background: rgba(244, 227, 223, .86);
-  color: var(--red);
-}
 .form-buttons {
   display: grid;
   gap: 7px;
