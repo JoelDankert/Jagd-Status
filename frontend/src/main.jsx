@@ -1036,7 +1036,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         ) : (
           <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={19} maxZoom={22} />
         )}
-        <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
+        <MapEvents data={data} openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
         <FlyToSelection data={data} selected={selected} animate={animateMove} />
