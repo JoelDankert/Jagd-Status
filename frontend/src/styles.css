@@ -514,7 +514,9 @@ button:disabled, input:disabled {
   width: 9px !important;
   height: 9px !important;
 }
-.pin.abschuss { --pin-bg: #ec407a; }
+.pin.abschuss { width: 18px !important; height: 18px !important; --pin-bg: #ec407a; }
+.pin.abschuss.is-archived { width: 14px !important; height: 14px !important; }
+.pin.abschuss span { font-size: 9px; }
 .pin.abschuss.wild-rehwild { --pin-bg: #4caf50; }
 .pin.abschuss.wild-rotwild { --pin-bg: #e53935; }
 .pin.abschuss.wild-damwild { --pin-bg: #fb8c00; }
@@ -526,8 +528,8 @@ button:disabled, input:disabled {
 .pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
 .pin.abschuss.wild-sonstiges { --pin-bg: #c2185b; }
 .pin.aktivitaet {
-  width: 48px !important;
-  height: 48px !important;
+  width: 96px !important;
+  height: 96px !important;
   background: transparent;
   border: 0;
   overflow: visible;

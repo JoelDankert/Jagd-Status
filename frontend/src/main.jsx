@@ -65,9 +65,9 @@ const MAX_PULSE_BPM = 150;
 const MIN_PULSE_BPM = 20;
 const ACTIVITY_PULSE_COUNT = 8;
 const ACTIVITY_BASE_ZOOM = 14;
-const ACTIVITY_BASE_DIAMETER_PX = 60;
-const ACTIVITY_MAX_DIAMETER_PX = 420;
-const ACTIVITY_HITBOX_PX = 48;
+const ACTIVITY_BASE_DIAMETER_PX = 120;
+const ACTIVITY_MAX_DIAMETER_PX = 840;
+const ACTIVITY_HITBOX_PX = 96;
 const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
 const ACTIVITY_PING_RADIUS_METERS = Math.round(
   (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DEFAULT_MAP_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
@@ -357,7 +357,8 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const isActivity = type === "aktivitaet";
   const kameraSize = archived ? 9 : 12;
   const otherSize = archived ? 18 : 25;
-  const size = type === "kamera" ? kameraSize : isActivity ? ACTIVITY_HITBOX_PX : otherSize;
+  const shotSize = archived ? 14 : 18;
+  const size = type === "kamera" ? kameraSize : isActivity ? ACTIVITY_HITBOX_PX : type === "abschuss" ? shotSize : otherSize;
   const pulseName = pulse ? `${isActivity ? "act" : "shot"}-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
   const pulseCount = isActivity && pulse?.pulseCount ? pulse.pulseCount : 8;
   const loopMs = pulse ? (isActivity ? pulse.cycleMs * pulseCount : pulse.cycleMs * pulseCount) : 0;
@@ -1031,10 +1032,11 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
-          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={18} maxZoom={22} noWrap />
-          {mapLayer === "sat" ? (
+        {mapLayer === "sat" ? (
           <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={19} maxZoom={22} noWrap />
-          ) : null}
+        ) : (
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={18} maxZoom={22} noWrap />
+        )}
         <MapEvents data={data} openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
@@ -1545,6 +1547,13 @@ function activityRemainingHours(item) {
   return remainingMs / 3600000;
 }
 
+const ACTIVITY_DURATION_KEY = "jagd-activity-duration-hours";
+
+function storedActivityDuration() {
+  const stored = localStorage.getItem(ACTIVITY_DURATION_KEY);
+  return stored ? decimalInput(stored) || 24 : 24;
+}
+
 function formatActivityHours(hours) {
   return Number(hours).toLocaleString("de", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -1579,7 +1588,7 @@ function initialFormValues(form) {
   if (form.type === "aktivitaet") {
     return {
       name: item.name || "",
-      dauer_stunden: form.item ? Math.max(0.01, Math.round(activityRemainingHours(item) * 100) / 100) : (item.dauer_stunden ?? 24),
+      dauer_stunden: form.item ? Math.max(0.01, Math.round(activityRemainingHours(item) * 100) / 100) : (item.dauer_stunden ?? storedActivityDuration()),
       richtung_grad: item.richtung_grad ?? "",
       notiz: item.notiz || "",
     };
@@ -1767,6 +1776,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
       delete body.wildart_sonstiges;
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
+      if (form.type === "aktivitaet" && body.dauer_stunden) localStorage.setItem(ACTIVITY_DURATION_KEY, String(body.dauer_stunden));
       await load();
     } catch (err) {
       setError(err.message);
