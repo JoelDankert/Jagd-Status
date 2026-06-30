@@ -1029,8 +1029,8 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
   const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
-    <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className={`map ${data.settings.show_geschlecht === 0 ? "hide-gender" : ""}`}>
+    <main className={`map-shell${data.settings.show_geschlecht === 0 ? " hide-gender" : ""}`} data-layer={mapLayer}>
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "sat" ? (
