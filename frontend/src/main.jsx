@@ -387,10 +387,10 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   const labelHtml = "";
-  const genderDot = type === "abschuss" && item?.geschlecht ? `<i class="gender-dot gender-${item.geschlecht}"></i>` : "";
+  const genderClass = type === "abschuss" && item?.geschlecht && item.geschlecht !== "offen" ? ` geschlecht-${item.geschlecht}` : "";
   return L.divIcon({
-    className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}${genderDot}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
+    className: `pin ${type} ${type === "abschuss" ? (WILDART_KLASSEN[item?.wildart] || "wild-sonstiges") + genderClass : ""} ${archived ? "is-archived" : ""}`,
+    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
