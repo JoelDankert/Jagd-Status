@@ -1491,8 +1491,8 @@ function SettingsPanel({ data, load, close }) {
     }
   };
   const toggle = (key) => setLocal((prev) => ({ ...prev, [key]: prev[key] ? 0 : 1 }));
-  const clearFrom = useLongPressClear(() => { setLocal((prev) => ({ ...prev, map_date_filter_from: "" })); });
-  const clearTo = useLongPressClear(() => { setLocal((prev) => ({ ...prev, map_date_filter_to: "" })); });
+  const clearFrom = () => { setLocal((prev) => ({ ...prev, map_date_filter_from: "" })); };
+  const clearTo = () => { setLocal((prev) => ({ ...prev, map_date_filter_to: "" })); };
   return (
     <div className="overlay">
       <section className="modal small">
@@ -1506,8 +1506,8 @@ function SettingsPanel({ data, load, close }) {
           ["show_archived", "Archivierte"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <div className="two">
-          <label>Von<input type="date" disabled={saving} value={local.map_date_filter_from || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} {...clearFrom} /></label>
-          <label>Bis<input type="date" disabled={saving} value={local.map_date_filter_to || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} {...clearTo} /></label>
+          <label>Von<span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />{local.map_date_filter_from ? <button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label>
+          <label>Bis<span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />{local.map_date_filter_to ? <button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label>
         </div>
         <button className={`primary ${saving ? "is-loading" : ""}`} type="button" disabled={!dirty || saving} onClick={apply}>
           {saving ? "Speichert" : "Übernehmen"}
@@ -2144,8 +2144,8 @@ function Rows({ selected, item, data }) {
 function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction, setAnimateMove }) {
   const [sortBy, setSortBy] = useState("datum");
   const [sortDir, setSortDir] = useState("desc");
-  const clearFrom = useLongPressClear(() => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-date-from"); });
-  const clearTo = useLongPressClear(() => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-date-to"); });
+  const clearFrom = () => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-date-from"); };
+  const clearTo = () => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-date-to"); };
   const sortOptions = [{ key: "datum", label: "Datum" }, { key: "schussdistanz", label: "Schussdistanz" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
   useEffect(() => {
     if (tab === "abschuesse") { setSortBy("datum"); setSortDir("desc"); }
@@ -2181,8 +2181,8 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       <div className="filters">
         <label>Suchen<input value={filters.q} maxLength={INPUT_LIMITS.search} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
-        {tab === "abschuesse" ? <label>Von<input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-from", v); setFilters({ ...filters, from: v }); }} {...clearFrom} /></label> : null}
-        {tab === "abschuesse" ? <label>Bis<input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-to", v); setFilters({ ...filters, to: v }); }} {...clearTo} /></label> : null}
+        {tab === "abschuesse" ? <label>Von<span className="field-with-button"><input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-from", v); setFilters({ ...filters, from: v }); }} />{filters.from ? <button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label> : null}
+        {tab === "abschuesse" ? <label>Bis<span className="field-with-button"><input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-to", v); setFilters({ ...filters, to: v }); }} />{filters.to ? <button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button> : null}</span></label> : null}
       </div>
       {tab === "abschuesse" ? (
         <label className="sort-label">Sortierung
