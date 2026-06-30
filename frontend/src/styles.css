@@ -13,10 +13,20 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 body {
+  position: fixed;
+  inset: 0;
   background: var(--bg);
   color: var(--text);
+  touch-action: manipulation;
 }
 button, input, select, textarea { font: inherit; }
 button { border: 0; cursor: pointer; }
@@ -203,7 +213,13 @@ textarea { min-height: 80px; resize: vertical; }
 }
 
 
-.app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+.app {
+  height: 100%;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
 .top {
   position: relative;
   height: 58px;
@@ -343,8 +359,8 @@ button:disabled, input:disabled {
   gap: 7px;
 }
 
-.map-shell { min-height: 0; position: relative; }
-.map { height: 100%; width: 100%; background: var(--bg); }
+.map-shell { min-height: 0; position: relative; overflow: hidden; }
+.map { height: 100%; width: 100%; background: var(--bg); overflow: hidden; }
 .map.is-map-interacting .shot-line,
 .map.is-map-interacting .pin.aktivitaet {
   opacity: 0 !important;
@@ -700,18 +716,24 @@ dd { margin: 0; text-align: right; }
   align-items: start;
   justify-items: center;
   padding: 18px;
-  padding-top: clamp(72px, 12vh, 128px);
-  padding-bottom: clamp(72px, 12vh, 128px);
+  padding-top: clamp(72px, 12dvh, 128px);
+  padding-bottom: clamp(72px, 12dvh, 128px);
   background: rgba(12, 17, 13, .38);
   z-index: 1000;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 .overlay.is-picking {
   display: none;
 }
 .modal {
   width: min(480px, 100%);
-  max-height: calc(100vh - clamp(144px, 24vh, 256px));
+  max-height: calc(100dvh - clamp(144px, 24dvh, 256px));
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   padding: 16px;
   display: grid;
   gap: 10px;
@@ -896,9 +918,17 @@ dd { margin: 0; text-align: right; }
 }
 
 .list-screen { padding: 18px; overflow: auto; }
-.list-screen > * { max-width: 1080px; margin-left: auto; margin-right: auto; }
-.tabs.wide { display: flex; max-width: none; margin-bottom: 14px; }
-.tabs.wide button { flex: 1; }
+.list-shell { max-width: 1080px; margin: 0 auto; }
+.list-screen .tabs.wide {
+  position: static;
+  transform: none;
+  left: auto;
+  display: flex;
+  width: 100%;
+  max-width: none;
+  margin: 0 0 14px 0;
+}
+.list-screen .tabs.wide button { flex: 1; }
 .filters { display: grid; grid-template-columns: minmax(190px, 1fr) 190px 170px 170px; gap: 10px; margin-bottom: 12px; }
 .list-toggle {
   align-self: end;
@@ -990,7 +1020,7 @@ dd { margin: 0; text-align: right; }
     padding-bottom: 86px;
   }
   .modal {
-    max-height: calc(100vh - 172px);
+    max-height: calc(100dvh - 172px);
   }
   .leaflet-control-attribution {
     bottom: 0 !important;

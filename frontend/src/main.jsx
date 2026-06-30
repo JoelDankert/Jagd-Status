@@ -2030,7 +2030,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
   const [sortDir, setSortDir] = useState("desc");
   const clearFrom = useLongPressClear(() => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-date-from"); });
   const clearTo = useLongPressClear(() => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-date-to"); });
-  const sortOptions = [{ key: "datum", label: "Datum" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
+  const sortOptions = [{ key: "datum", label: "Datum" }, { key: "schussdistanz", label: "Schussdistanz" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
   useEffect(() => {
     if (tab === "abschuesse") { setSortBy("datum"); setSortDir("desc"); }
   }, [tab]);
@@ -2043,6 +2043,14 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
     })
     .sort((a, b) => {
       if (sortBy === "datum") return (sortDir === "desc" ? 1 : -1) * compareAbschuss(b, a);
+      if (sortBy === "schussdistanz") {
+        const va = shotDistance(a, data);
+        const vb = shotDistance(b, data);
+        if (va === null && vb === null) return compareAbschuss(b, a);
+        if (va === null) return 1;
+        if (vb === null) return -1;
+        return sortDir === "asc" ? va - vb : vb - va;
+      }
       const va = a[sortBy] ?? "";
       const vb = b[sortBy] ?? "";
       const cmp = typeof va === "number" ? va - vb : String(va).localeCompare(String(vb), "de", { sensitivity: "base" });
@@ -2050,7 +2058,8 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
     });
   return (
     <main className="list-screen">
-      <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
+      <div className="list-shell">
+        <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
       <div className="filters">
         <label>Suchen<input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
@@ -2074,6 +2083,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
           <button type="button" onClick={() => { setAnimateMove(false); openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
         </div>
       </article>)}</section>
+      </div>
     </main>
   );
 }
