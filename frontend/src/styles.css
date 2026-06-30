@@ -354,14 +354,18 @@ button:disabled, input:disabled {
   gap: 7px;
   margin-top: 10px;
 }
-.form-buttons .primary,
-.form-buttons .move-button {
+.form-buttons button {
   width: 100%;
+  min-height: 38px;
   margin-top: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 .form-buttons .move-button {
   padding: 8px 12px;
-  border-radius: 6px;
   margin-bottom: 0;
 }
 .account-delete-button {

@@ -202,7 +202,6 @@ function setupDb() {
     CREATE TABLE IF NOT EXISTS kamera (
       id TEXT PRIMARY KEY,
       revier_id TEXT NOT NULL,
-      name TEXT NOT NULL,
       position_lat REAL NOT NULL,
       position_lng REAL NOT NULL,
       status TEXT NOT NULL DEFAULT 'aktiv',
@@ -288,6 +287,7 @@ function setupDb() {
   ensureColumn("kamera", "bild2", "TEXT");
   ensureColumn("kamera", "bild3", "TEXT");
   ensureColumn("kamera", "typ", "TEXT");
+  dropKameraNameColumn();
   ensureColumn("settings", "show_kameras", "INTEGER DEFAULT 1");
   ensureColumn("revier", "viewer_passwort_hash", "TEXT");
   ensureColumn("aktivitaet", "notiz", "TEXT");
@@ -300,6 +300,44 @@ function ensureColumn(table, column, definition) {
   }
 }
 
+function dropKameraNameColumn() {
+  const columns = db.prepare("PRAGMA table_info(kamera)").all();
+  if (!columns.some((entry) => entry.name === "name")) return;
+
+  db.prepare("UPDATE kamera SET typ = name WHERE (typ IS NULL OR typ = '') AND name IS NOT NULL AND name != ''").run();
+  try {
+    db.prepare("ALTER TABLE kamera DROP COLUMN name").run();
+    return;
+  } catch {}
+
+  db.transaction(() => {
+    db.exec(`
+      DROP TABLE IF EXISTS kamera_without_name;
+      CREATE TABLE kamera_without_name (
+        id TEXT PRIMARY KEY,
+        revier_id TEXT NOT NULL,
+        position_lat REAL NOT NULL,
+        position_lng REAL NOT NULL,
+        status TEXT NOT NULL DEFAULT 'aktiv',
+        bild_data TEXT,
+        bild2 TEXT,
+        bild3 TEXT,
+        typ TEXT,
+        notiz TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
+      );
+      INSERT INTO kamera_without_name (
+        id, revier_id, position_lat, position_lng, status, bild_data, bild2, bild3, typ, notiz, created_at, updated_at
+      )
+      SELECT id, revier_id, position_lat, position_lng, status, bild_data, bild2, bild3, typ, notiz, created_at, updated_at
+      FROM kamera;
+      DROP TABLE kamera;
+      ALTER TABLE kamera_without_name RENAME TO kamera;
+    `);
+  })();
+}
 function ensureSettings(revierId) {
   const settings = db.prepare("SELECT * FROM settings WHERE revier_id = ?").get(revierId);
   if (settings) return settings;
@@ -535,7 +573,7 @@ app.get("/api/map-data", requireAuth, (req, res) => {
     settings: ensureSettings(req.revierId),
     role: req.role,
     kanzeln: db.prepare("SELECT * FROM kanzel WHERE revier_id = ? ORDER BY name").all(req.revierId).map(stripRowImages),
-    kameras: db.prepare("SELECT * FROM kamera WHERE revier_id = ? ORDER BY name").all(req.revierId).map(stripRowImages),
+    kameras: db.prepare("SELECT * FROM kamera WHERE revier_id = ? ORDER BY typ, created_at DESC").all(req.revierId).map(stripRowImages),
     abschuesse: db.prepare("SELECT * FROM abschuss WHERE revier_id = ? ORDER BY datum DESC, created_at DESC").all(req.revierId).map(stripRowImages),
     schuetzen: db.prepare("SELECT DISTINCT schuetz_name FROM abschuss WHERE revier_id = ? AND schuetz_name != '' ORDER BY schuetz_name").all(req.revierId).map((row) => row.schuetz_name),
     aktivitaeten,
@@ -623,7 +661,8 @@ function createHandler(table, extraFields = []) {
   return (req, res) => {
     try {
       const name = clean(req.body.name);
-      if (!name && table !== "abschuss") throw new Error("Name fehlt");
+      if (table === "kamera" && !clean(req.body.typ)) throw new Error("Typ fehlt");
+      if (!name && table !== "abschuss" && table !== "kamera") throw new Error("Name fehlt");
       const lat = req.body.position_lat != null ? num(req.body.position_lat, "Position") : null;
       const lng = req.body.position_lng != null ? num(req.body.position_lng, "Position") : null;
       const stamp = now();
@@ -636,8 +675,11 @@ function createHandler(table, extraFields = []) {
 
       processImageFields(req.body, `${table}_${itemId}`);
 
-      const fields = table === "kanzel" || table === "kamera"
+      const fields = table === "kanzel"
         ? ["id", "revier_id", "name", "typ", "position_lat", "position_lng", "status",
+           "bild_data", "bild2", "bild3", "notiz", "created_at", "updated_at"]
+        : table === "kamera"
+        ? ["id", "revier_id", "typ", "position_lat", "position_lng", "status",
            "bild_data", "bild2", "bild3", "notiz", "created_at", "updated_at"]
         : ["id", "revier_id", "kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng",
            "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text",
@@ -739,7 +781,7 @@ app.post("/api/abschuesse", requireAuth, requireAdmin, createHandler("abschuss")
 app.patch("/api/kanzeln/:id", requireAuth, requireAdmin,
   patchHandler("kanzel", ["name", "typ", "position_lat", "position_lng", "status", "bild_data", "bild2", "bild3", "notiz"]));
 app.patch("/api/kameras/:id", requireAuth, requireAdmin,
-  patchHandler("kamera", ["name", "typ", "position_lat", "position_lng", "status", "bild_data", "bild2", "bild3", "notiz"]));
+  patchHandler("kamera", ["typ", "position_lat", "position_lng", "status", "bild_data", "bild2", "bild3", "notiz"]));
 app.patch("/api/abschuesse/:id", requireAuth, requireAdmin,
   patchHandler("abschuss", ["kanzel_id", "position_lat", "position_lng", "schuss_lat", "schuss_lng",
     "schuss_kanzel_id", "datum", "uhrzeit", "wildart", "geschlecht", "alter_text", "schuetz_name",
@@ -773,9 +815,10 @@ app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
     if (!item) return res.status(404).json({ error: "Nicht gefunden" });
     const set = {};
     const vals = [];
-    for (const key of ["name", "dauer_stunden", "richtung_grad", "notiz"]) {
+    for (const key of ["name", "position_lat", "position_lng", "dauer_stunden", "richtung_grad", "notiz"]) {
       if (!(key in req.body)) continue;
-      if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
+      if (key === "position_lat" || key === "position_lng") set[key] = optionalNum(req.body[key]);
+      else if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
       else if (key === "dauer_stunden") set.dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body[key]) || 24));
       else if (key === "notiz") set.notiz = truncNote(req.body[key]);
       else set.name = clean(req.body[key]);

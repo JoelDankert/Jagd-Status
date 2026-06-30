@@ -567,7 +567,7 @@ function App() {
       {settingsOpen && !originPick && <SettingsPanel data={data} load={load} close={() => setSettingsOpen(false)} isViewer={isViewer} />}
       {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={isViewer ? () => {} : openForm} isViewer={isViewer} setConfirmAction={setConfirmAction} />}
       {createAt && !isViewer && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={openForm} />}
-      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
+      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} setConfirmAction={setConfirmAction} />}
 
       {accountOpen && <AccountPanel data={data} load={load} close={() => setAccountOpen(false)} setConfirmAction={setConfirmAction} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} message={confirmAction.message} hint={confirmAction.hint} confirmLabel={confirmAction.confirmLabel} confirmClass={confirmAction.confirmClass} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
@@ -1010,16 +1010,17 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
-          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={18} maxZoom={22} />
-          {mapLayer === "sat" ? (
-          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={19} maxZoom={22} />
-          ) : null}
-        <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
+        {mapLayer === "osm" ? (
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
+        ) : (
+          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
+        )}
+        <MapEvents data={data} openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
         {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
         <FlyToSelection data={data} selected={selected} animate={animateMove} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} pane={MAP_PANES.lines} />)}
-        {originPick ? <PickTarget originPick={originPick} /> : null}
+        {originPick && originPick.mode !== "move" ? <PickTarget originPick={originPick} /> : null}
         {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel, i) => (
           <Marker
             key={kanzel.id}
@@ -1182,14 +1183,35 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, pane, op
   return null;
 });
 
-function MapEvents({ openCreate, originPick, setOriginPick }) {
+function MapEvents({ data, openCreate, originPick, setOriginPick }) {
+  const map = useMap();
   const timer = useRef(null);
   const originPickRef = useRef(originPick);
   originPickRef.current = originPick;
   const setOriginPickRef = useRef(setOriginPick);
   setOriginPickRef.current = setOriginPick;
+  const snapKanzelMove = (next) => {
+    const pick = originPickRef.current;
+    if (pick?.mode !== "move" || pick?.type !== "kanzel") return next;
+    const current = pick.target;
+    if (!current) return next;
+    const tapPoint = map.latLngToLayerPoint(next);
+    const currentPoint = map.latLngToLayerPoint([current.lat, current.lng]);
+    const snapPx = 28;
+    const candidates = data.abschuesse
+      .map((abschuss) => shotOrigin(abschuss, data))
+      .filter((origin) => origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng))
+      .map((origin) => {
+        const originPoint = map.latLngToLayerPoint([origin.lat, origin.lng]);
+        return { origin, tapDistance: tapPoint.distanceTo(originPoint), currentDistance: currentPoint.distanceTo(originPoint) };
+      })
+      .filter((candidate) => candidate.tapDistance <= snapPx && candidate.currentDistance > snapPx)
+      .sort((a, b) => a.tapDistance - b.tapDistance);
+    return candidates[0]?.origin || next;
+  };
   const setOrigin = (next) => {
-    setOriginPickRef.current({ ...originPickRef.current, origin: { type: "point", lat: next.lat, lng: next.lng } });
+    const picked = snapKanzelMove(next);
+    setOriginPickRef.current({ ...originPickRef.current, origin: { type: "point", lat: picked.lat, lng: picked.lng } });
   };
   useMapEvents({
     dblclick(e) {
@@ -1572,11 +1594,12 @@ function initialOriginLabel(item) {
   return "";
 }
 
-function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
+function ObjectForm({ data, form, originPick, setOriginPick, close, load, setConfirmAction }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [weatherLoading, setWeatherLoading] = useState("");
   const [imageLoading, setImageLoading] = useState(null);
+  const [actionLoading, setActionLoading] = useState("");
   const formId = useRef(form.id || localId()).current;
   const [movedPoint, setMovedPoint] = useState(null);
   const point = movedPoint || form.point;
@@ -1616,10 +1639,12 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const origin = originPick?.formId === formId ? originPick.origin : null;
   const picking = originPick?.formId === formId && !originPick.origin && originPick.mode !== "richtung";
   const editing = form.mode === "edit";
+  const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : form.type === "aktivitaet" ? "/api/aktivitaeten" : "/api/abschuesse";
+  const itemId = form.item?.id;
   const fillWeather = (target) => {
     if (form.type !== "abschuss") return;
     setWeatherLoading(target);
-    autofillWeather(form.point, values.datum || today(), values.uhrzeit || currentTime())
+    autofillWeather(point, values.datum || today(), values.uhrzeit || currentTime())
       .then((next) => {
         if (!next) return;
         setValues((current) => ({
@@ -1664,6 +1689,33 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setOriginPick(null);
   }, [originPick, formId, setOriginPick]);
 
+  const archiveItem = async () => {
+    if (!editing || !itemId || form.type === "aktivitaet") return;
+    setActionLoading("archive");
+    setError("");
+    try {
+      await api(`${path}/${itemId}`, { method: "PATCH", body: { status: form.item.status === "archiviert" ? "aktiv" : "archiviert" } });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const deleteItem = async () => {
+    if (!editing || !itemId) return;
+    setActionLoading("delete");
+    setError("");
+    try {
+      await api(`${path}/${itemId}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading("");
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
     if (form.type === "kanzel") {
@@ -1682,10 +1734,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: point.lat, position_lng: point.lng };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
-      if (form.type === "kamera") body.name = body.typ;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
       delete body.wildart_sonstiges;
-      const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : form.type === "aktivitaet" ? "/api/aktivitaeten" : "/api/abschuesse";
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
       await load();
     } catch (err) {
@@ -1778,7 +1828,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                   setSelectedKanzelId("");
                 }}><Trash2 size={16} /></button>
               ) : (
-                <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Von der Karte auswählen</button>
+                <button type="button" onClick={() => setOriginPick({ formId, mode: "origin", target: point, origin: null })}>Von der Karte auswählen</button>
               )}
             </div>
             <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
@@ -1786,8 +1836,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
         )}
         <p className="error">{error}</p>
         <div className="form-buttons">
-          <button className="quiet move-button" type="button" disabled={saving || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: form.point, origin: null })}>Verschieben</button>
-          <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
+          <button className="quiet move-button" type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: point, origin: null })}>Verschieben</button>
+          {editing && form.type !== "aktivitaet" ? <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archiveItem}>{form.item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button> : null}
+          {editing ? <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: form.type === "aktivitaet" ? "Die Aktivität wird dauerhaft entfernt." : "Oft ist es besser, das Element zu archivieren.", action: deleteItem })}><Trash2 size={16} />Löschen</button> : null}
+          <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || Boolean(actionLoading) || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
         </div>
       </form>
     </div>
@@ -1946,7 +1998,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
             </div>
           ) : null}
           <div className="detail-heading">
-            <h2>{selected.type === "kamera" ? (item.typ || item.name) : (item.name || item.wildart)}</h2>
+            <h2>{selected.type === "kamera" ? item.typ : (item.name || item.wildart)}</h2>
             {item.status === "archiviert" ? <p className="muted">Archiviert</p> : null}
           </div>
         </div>
@@ -2108,7 +2160,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       </div>
       </label>) : null}
       <section className="rows">{items.map((item) => <article key={item.id} className={item.status === "archiviert" ? "is-archived" : ""}>
-        <div><strong>{tab === "kameras" ? (item.typ || item.name) : (item.name || item.wildart)}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
+        <div><strong>{tab === "kameras" ? item.typ : (item.name || item.wildart)}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
         <div className="row-actions">
           <button type="button" onClick={() => { setAnimateMove(false); openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
         </div>
@@ -2190,10 +2242,9 @@ function apiName(type) {
   return "abschuesse";
 }
 
-let formCounter = 0;
 function formKey(form) {
   const point = form.point ? `${form.point.lat}:${form.point.lng}` : "nopoint";
-  return `${form.mode || "neu"}:${form.type}:${form.item?.id || point}:${++formCounter}`;
+  return `${form.mode || "neu"}:${form.type}:${form.item?.id || point}`;
 }
 
 function singular(tab) {
