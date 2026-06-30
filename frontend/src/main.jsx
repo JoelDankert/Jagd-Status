@@ -1030,7 +1030,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className={`map ${!Number(data.settings.show_geschlecht) ? "hide-gender" : ""}`}>
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className={`map ${data.settings.show_geschlecht === 0 ? "hide-gender" : ""}`}>
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "sat" ? (
@@ -1502,12 +1502,12 @@ function SettingsPanel({ data, load, close }) {
         <header><h2><Layers size={18} /> Einstellungen</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {[
           ["show_self_location", "Eigene Position"],
+          ["show_archived", "Archivierte"],
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
           ["show_aktivitaeten", "Aktivitäten"],
-          ["show_archived", "Archivierte"],
-          ["show_geschlecht", "Geschlecht andeuten"],
+          ["show_geschlecht", "Geschlecht"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <label>Von{local.map_date_filter_from ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />}</label>
         <label>Bis{local.map_date_filter_to ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} /><button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />}</label>
