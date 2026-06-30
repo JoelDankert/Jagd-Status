@@ -257,13 +257,13 @@ function geschlechtValue(value) {
   return value || "";
 }
 
-function markerLetter(value, fallback) {
+function markerLetter(value, fallback, limit = 2) {
   const letters = String(value || "")
     .trim()
     .split(" ")
     .map((part) => part.match(/[\p{L}\p{N}]/u)?.[0])
     .filter(Boolean)
-    .slice(0, 2)
+    .slice(0, limit)
     .join("");
   return letters || fallback;
 }
@@ -1021,12 +1021,13 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         <FlyToSelection data={data} selected={selected} animate={animateMove} />
         {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} pane={MAP_PANES.lines} />)}
         {originPick ? <PickTarget originPick={originPick} /> : null}
-        {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
+        {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel, i) => (
           <Marker
             key={kanzel.id}
             pane={MAP_PANES.kanzeln}
             position={[kanzel.position_lat, kanzel.position_lng]}
             icon={markerIcon("kanzel", kanzel, kanzel.status === "archiviert")}
+            zIndexOffset={visible.kanzeln.length - i}
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
@@ -1036,12 +1037,13 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             }}
           />
         )) : null}
-        {Number(data.settings.show_kameras) ? visible.kameras.map((kamera) => (
+        {Number(data.settings.show_kameras) ? visible.kameras.map((kamera, i) => (
           <Marker
             key={kamera.id}
             pane={MAP_PANES.kameras}
             position={[kamera.position_lat, kamera.position_lng]}
             icon={markerIcon("kamera", kamera, kamera.status === "archiviert")}
+            zIndexOffset={visible.kameras.length - i}
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
@@ -1050,8 +1052,8 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             }}
           />
         )) : null}
-        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => (
-          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} pane={MAP_PANES.abschuesse} />
+        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss, i) => (
+          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} pane={MAP_PANES.abschuesse} zIndexOffset={visible.abschuesse.length - i} />
         )) : null}
         {data.aktivitaeten?.map((aktivitaet) => (
           <ActivityMarker
@@ -1062,7 +1064,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             setAnimateMove={setAnimateMove}
           />
         ))}
-        {originPick?.origin?.lat ? <Marker pane={MAP_PANES.pick} position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
+        {originPick?.origin?.lat && originPick.mode !== "move" ? <Marker pane={MAP_PANES.pick} position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker pane={MAP_PANES.self} position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
       <div className="map-top-right">
@@ -1074,7 +1076,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   );
 }
 
-const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, setAnimateMove, pane }) {
+const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, setAnimateMove, pane, zIndexOffset }) {
   const icon = useMemo(
     () => markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss)),
     [
@@ -1099,6 +1101,7 @@ const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, set
       pane={pane}
       position={[abschuss.position_lat, abschuss.position_lng]}
       icon={icon}
+      zIndexOffset={zIndexOffset}
       eventHandlers={eventHandlers}
     />
   );
@@ -1322,7 +1325,7 @@ function MapTools({ setSelfPos }) {
     locationWatch.current = navigator.geolocation.watchPosition(
       acceptLocation,
       handleLocationError,
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 300 }
     );
   };
   const requestFastLocation = () => {
@@ -1572,6 +1575,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   const [weatherLoading, setWeatherLoading] = useState("");
   const [imageLoading, setImageLoading] = useState(null);
   const formId = useRef(form.id || localId()).current;
+  const [movedPoint, setMovedPoint] = useState(null);
+  const point = movedPoint || form.point;
   const datePickerRef = useRef(null);
   const timePickerRef = useRef(null);
   const [originLabel, setOriginLabel] = useState(() => initialOriginLabel(form.item));
@@ -1581,13 +1586,13 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     return form.item.schuss_kanzel_id || "";
   });
   const sortedKanzeln = useMemo(() => {
-    const p = form.point;
+    const p = point;
     return [...data.kanzeln].sort((a, b) => {
       const da = Math.hypot(a.position_lat - p.lat, a.position_lng - p.lng);
       const db = Math.hypot(b.position_lat - p.lat, b.position_lng - p.lng);
       return da - db;
     });
-  }, [data.kanzeln, form.point.lat, form.point.lng]);
+  }, [data.kanzeln, point.lat, point.lng]);
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const setImage = async (index, file) => {
     if (!file) return;
@@ -1640,6 +1645,11 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
   useEffect(() => {
     const o = originPick?.formId === formId ? originPick?.origin : null;
     if (!o || o.type === "richtung") return;
+    if (originPick.mode === "move") {
+      setMovedPoint({ lat: o.lat, lng: o.lng });
+      setOriginPick(null);
+      return;
+    }
     setOriginLabel("Punkt gewählt");
     setValues((current) => ({
       ...current,
@@ -1666,7 +1676,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setSaving(true);
     setError("");
     try {
-      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
+      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: point.lat, position_lng: point.lng };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
       if (form.type === "kamera") body.name = body.typ;
@@ -2177,9 +2187,10 @@ function apiName(type) {
   return "abschuesse";
 }
 
+let formCounter = 0;
 function formKey(form) {
   const point = form.point ? `${form.point.lat}:${form.point.lng}` : "nopoint";
-  return `${form.mode || "neu"}:${form.type}:${form.item?.id || point}`;
+  return `${form.mode || "neu"}:${form.type}:${form.item?.id || point}:${++formCounter}`;
 }
 
 function singular(tab) {
