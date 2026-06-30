@@ -387,7 +387,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   const labelHtml = "";
-  const genderClass = type === "abschuss" && item?.geschlecht && item.geschlecht !== "offen" ? ` geschlecht-${item.geschlecht}` : "";
+  const genderClass = type === "abschuss" && item?.geschlecht && item.geschlecht !== "offen" ? ` geschlecht-${item.geschlecht.replace("ä","ae").replace("ö","oe").replace("ü","ue")}` : "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? (WILDART_KLASSEN[item?.wildart] || "wild-sonstiges") + genderClass : ""} ${archived ? "is-archived" : ""}`,
     html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
