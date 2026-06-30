@@ -1820,8 +1820,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
             <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((w) => <option key={w} value={w}>{w}</option>)}</select></label>
             {values.wildart === "Sonstiges" ? <label><input value={values.wildart_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("wildart_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
             <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
-            <label>Alter (Jahre)<input inputMode="decimal" maxLength={INPUT_LIMITS.age} value={values.alter_text} onChange={(e) => set("alter_text", decimalInput(e.target.value, INPUT_LIMITS.age))} /></label>
-            <label>Gewicht (kg)<input inputMode="decimal" maxLength={INPUT_LIMITS.decimal} value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", decimalInput(e.target.value))} /></label>
+            <label>Alter (Jahre)<input inputMode="text" maxLength={INPUT_LIMITS.age} value={values.alter_text} onChange={(e) => set("alter_text", e.target.value)} /></label>
+            <label>Gewicht (kg)<input inputMode="text" maxLength={INPUT_LIMITS.decimal} value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
             <label>Zeitpunkt<span className="native-date-time date-time-split">
               <span className="date-time-pair">
                 <button type="button" className="date-time-trigger" onClick={() => {
@@ -2169,7 +2169,9 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       }
       const va = a[sortBy] ?? "";
       const vb = b[sortBy] ?? "";
-      const cmp = typeof va === "number" ? va - vb : String(va).localeCompare(String(vb), "de", { sensitivity: "base" });
+      const na = typeof va === "string" ? (Number(va.replace(",", ".").match(/[\d.]+/)?.[0]) || 0) : Number(va) || 0;
+      const nb = typeof vb === "string" ? (Number(vb.replace(",", ".").match(/[\d.]+/)?.[0]) || 0) : Number(vb) || 0;
+      const cmp = Number.isFinite(na) && Number.isFinite(nb) ? na - nb : String(va).localeCompare(String(vb), "de", { sensitivity: "base" });
       return sortDir === "asc" ? cmp : -cmp;
     });
   return (

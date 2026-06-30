@@ -372,7 +372,7 @@ button:disabled, input:disabled {
   min-width: 0;
 }
 .form-action-row button {
-  font-size: 13px;
+  font-size: 14px;
 }
 .account-delete-button {
   width: 100%;

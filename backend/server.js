@@ -727,9 +727,9 @@ function createHandler(table, extraFields = []) {
         if (f === "revier_id") return req.revierId;
         if (f === "created_at" || f === "updated_at") return stamp;
         if (f === "status") return itemStatus(req.body.status);
-        if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(f))
-          return f === "gewicht_kg" ? optionalNum(req.body[f], "Gewicht", 1000) : optionalNum(req.body[f]);
-        if (f === "alter_text") return decimalText(req.body[f], "Alter", 99);
+        if (["position_lat", "position_lng", "schuss_lat", "schuss_lng"].includes(f))
+          return optionalNum(req.body[f]);
+        if (f === "gewicht_kg" || f === "alter_text") return limitText(req.body[f], TEXT_LIMITS.shortText);
         if (f === "datum") return clean(req.body.datum) || now().slice(0, 10);
         if (f === "uhrzeit") return table === "abschuss" ? clean(req.body.uhrzeit) : null;
         if (f === "wildart" && table === "abschuss") return limitText(req.body.wildart, TEXT_LIMITS.custom);
@@ -771,12 +771,12 @@ function patchHandler(table, allowed) {
             deleteItemImages({ [key]: oldItem[key] });
             values[key] = saveImage(val, `${table}_${req.params.id}`);
           }
-        } else if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(key)) {
-          values[key] = key === "gewicht_kg" ? optionalNum(val, "Gewicht", 1000) : optionalNum(val);
+        } else if (["position_lat", "position_lng", "schuss_lat", "schuss_lng"].includes(key)) {
+          values[key] = optionalNum(val);
+        } else if (key === "gewicht_kg" || key === "alter_text") {
+          values[key] = limitText(val, TEXT_LIMITS.shortText);
         } else if (key === "status") {
           values[key] = itemStatus(val);
-        } else if (key === "alter_text") {
-          values[key] = decimalText(val, "Alter", 99);
         } else if (key.endsWith("_id") || key === "typ") {
           values[key] = optional(val, fieldLimit(key));
         } else if (key === "notiz") {
