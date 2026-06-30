@@ -1501,8 +1501,8 @@ function SettingsPanel({ data, load, close }) {
       <section className="modal small">
         <header><h2><Layers size={18} /> Einstellungen</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {[
-          ["show_self_location", "Eigene Position"],
           ["show_archived", "Archivierte"],
+          ["show_self_location", "Eigene Position"],
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
