@@ -2169,8 +2169,8 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       }
       const va = a[sortBy] ?? "";
       const vb = b[sortBy] ?? "";
-      const na = typeof va === "string" ? (Number(va.replace(",", ".").match(/[\d.]+/)?.[0]) || 0) : Number(va) || 0;
-      const nb = typeof vb === "string" ? (Number(vb.replace(",", ".").match(/[\d.]+/)?.[0]) || 0) : Number(vb) || 0;
+      const na = typeof va === "string" ? (Number(va.replace(",", ".").match(/\d[\d.]*/)?.[0]) || 0) : Number(va) || 0;
+      const nb = typeof vb === "string" ? (Number(vb.replace(",", ".").match(/\d[\d.]*/)?.[0]) || 0) : Number(vb) || 0;
       const cmp = Number.isFinite(na) && Number.isFinite(nb) ? na - nb : String(va).localeCompare(String(vb), "de", { sensitivity: "base" });
       return sortDir === "asc" ? cmp : -cmp;
     });
