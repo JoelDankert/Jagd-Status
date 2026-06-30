@@ -260,6 +260,7 @@ function setupDb() {
       position_lng REAL NOT NULL,
       dauer_stunden REAL NOT NULL DEFAULT 0,
       richtung_grad REAL,
+      notiz TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
@@ -285,6 +286,7 @@ function setupDb() {
   ensureColumn("kamera", "typ", "TEXT");
   ensureColumn("settings", "show_kameras", "INTEGER DEFAULT 1");
   ensureColumn("revier", "viewer_passwort_hash", "TEXT");
+  ensureColumn("aktivitaet", "notiz", "TEXT");
 }
 
 function ensureColumn(table, column, definition) {
@@ -751,10 +753,11 @@ app.post("/api/aktivitaeten", requireAuth, requireAdmin, (req, res) => {
     const lng = num(req.body.position_lng, "Position");
     const dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body.dauer_stunden) || 24));
     const richtung_grad = optionalNum(req.body.richtung_grad);
+    const notiz = truncNote(req.body.notiz);
     const stamp = now();
     const itemId = id();
-    db.prepare("INSERT INTO aktivitaet (id, revier_id, name, position_lat, position_lng, dauer_stunden, richtung_grad, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
-      .run(itemId, req.revierId, name, lat, lng, dauer_stunden, richtung_grad, stamp, stamp);
+    db.prepare("INSERT INTO aktivitaet (id, revier_id, name, position_lat, position_lng, dauer_stunden, richtung_grad, notiz, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(itemId, req.revierId, name, lat, lng, dauer_stunden, richtung_grad, notiz, stamp, stamp);
     invalidateCache(req.revierId);
     res.status(201).json({ id: itemId });
   } catch (error) { fail(res, error); }
@@ -766,10 +769,11 @@ app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
     if (!item) return res.status(404).json({ error: "Nicht gefunden" });
     const set = {};
     const vals = [];
-    for (const key of ["name", "dauer_stunden", "richtung_grad"]) {
+    for (const key of ["name", "dauer_stunden", "richtung_grad", "notiz"]) {
       if (!(key in req.body)) continue;
       if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
       else if (key === "dauer_stunden") set.dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body[key]) || 24));
+      else if (key === "notiz") set.notiz = truncNote(req.body[key]);
       else set.name = clean(req.body[key]);
     }
     if (!Object.keys(set).length) return res.json({ ok: true });

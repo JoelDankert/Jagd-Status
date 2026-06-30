@@ -1001,7 +1001,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const center = markerCenter(mapItems);
   const defaultZoom = mapItems.length ? MARKER_MAP_ZOOM : DEFAULT_MAP_ZOOM;
   const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
-  const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
+  const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} className="map">
@@ -1086,7 +1086,7 @@ const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, set
   );
   const eventHandlers = useMemo(() => ({
     click: () => {
-      setAnimateMove(true);
+      setAnimateMove(false);
       openSelection({ type: "abschuss", id: abschuss.id });
     },
   }), [abschuss.id, openSelection, setAnimateMove]);
@@ -1112,7 +1112,7 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, pane, op
 
   useEffect(() => {
     clickRef.current = () => {
-      setAnimateMove(true);
+      setAnimateMove(false);
       openSelection({ type: "aktivitaet", id: aktivitaet.id });
     };
   }, [aktivitaet.id, openSelection, setAnimateMove]);
@@ -1532,6 +1532,7 @@ function initialFormValues(form) {
       name: item.name || "",
       dauer_stunden: form.item ? Math.max(0.01, Math.round(activityRemainingHours(item) * 100) / 100) : (item.dauer_stunden ?? 24),
       richtung_grad: item.richtung_grad ?? "",
+      notiz: item.notiz || "",
     };
   }
   const wildart = item.wildart || "";
@@ -1703,6 +1704,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
               <option value="270">W</option>
               <option value="315">NW</option>
             </select></label>
+            <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         ) : (
           <>
