@@ -7,7 +7,7 @@ import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X 
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
-let LAST_ZOOM = 14;
+let LAST_ZOOM = null;
 
 const api = async (path, options = {}) => {
   const res = await fetch(path, {
@@ -23,13 +23,20 @@ const api = async (path, options = {}) => {
   } catch {
     throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`);
   }
-  if (!res.ok) throw new Error(json.error || "Fehler");
+  if (!res.ok) {
+    const error = new Error(json.error || "Fehler");
+    error.status = res.status;
+    error.code = json.code;
+    throw error;
+  }
   return json;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-const DURCHHAUSEN_CENTER = [48.0392, 8.6747];
+const DEFAULT_MAP_CENTER = [51.1657, 10.4515];
+const DEFAULT_MAP_ZOOM = 6;
+const MARKER_MAP_ZOOM = 14;
 const IMAGE_MAX_ZOOM = 8;
 const MAX_PULSE_BPM = 150;
 const MIN_PULSE_BPM = 20;
@@ -40,8 +47,15 @@ const ACTIVITY_MAX_DIAMETER_PX = 420;
 const ACTIVITY_HITBOX_PX = 48;
 const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
 const ACTIVITY_PING_RADIUS_METERS = Math.round(
-  (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DURCHHAUSEN_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
+  (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DEFAULT_MAP_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
 );
+
+function dateTimeLocal(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("de", { dateStyle: "short", timeStyle: "short" });
+}
 
 function currentTime() {
   const date = new Date();
@@ -457,6 +471,15 @@ function App() {
     } catch (error) {
       localStorage.removeItem("jagd-credentials");
       setLoginError(error.message);
+      throw error;
+    }
+  }} onRequestRegistration={async (body) => {
+    try {
+      await api("/api/revier-requests", { method: "POST", body });
+      setLoginError("Registrierung angefordert.");
+    } catch (error) {
+      setLoginError(error.message);
+      throw error;
     }
   }} />;
 
@@ -498,22 +521,36 @@ function App() {
       {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
 
       {accountOpen && <AccountPanel data={data} load={load} close={() => setAccountOpen(false)} setConfirmAction={setConfirmAction} />}
-      {confirmAction && <ConfirmDialog message={confirmAction.message} hint={confirmAction.hint} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
+      {confirmAction && <ConfirmDialog title={confirmAction.title} message={confirmAction.message} hint={confirmAction.hint} confirmLabel={confirmAction.confirmLabel} confirmClass={confirmAction.confirmClass} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
 
     </div>
   );
 }
 
-function Login({ error, onLogin }) {
+function Login({ error, onLogin, onRequestRegistration }) {
   const [name, setName] = useState("");
   const [passwort, setPasswort] = useState("");
   const [loading, setLoading] = useState(true);
+  const [registrationConfirm, setRegistrationConfirm] = useState(false);
   const tried = useRef(false);
+  const requestRegistration = async () => {
+    setRegistrationConfirm(false);
+    setLoading(true);
+    try {
+      await onRequestRegistration({ name, passwort });
+    } finally {
+      setLoading(false);
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
       await onLogin({ name, passwort });
+    } catch (error) {
+      if (error.status === 404 && name && passwort) {
+        setRegistrationConfirm(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -544,6 +581,207 @@ function Login({ error, onLogin }) {
         <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Anmelden</button>
         <p className="error">{error}</p>
       </form>
+      {registrationConfirm ? (
+        <ConfirmDialog
+          title="Registrierung"
+          message="Account nicht vorhanden, Registrierung anfordern?"
+          confirmLabel="Anfordern"
+          onConfirm={requestRegistration}
+          onCancel={() => setRegistrationConfirm(false)}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function AdminPage() {
+  const [passwort, setPasswort] = useState("");
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [deleteRequestConfirm, setDeleteRequestConfirm] = useState(null);
+
+  const loadAdmin = async (adminPasswort = passwort) => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await api("/api/admin/data", { method: "POST", body: { passwort: adminPasswort } });
+      setData(next);
+      setPasswort(adminPasswort);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approve = async (requestId) => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/requests/${requestId}/approve`, { method: "POST", body: { passwort } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reject = async (requestId) => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/requests/${requestId}`, { method: "DELETE", body: { passwort } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteRevier = async () => {
+    if (!deleteConfirm) return;
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/reviere/${deleteConfirm.id}`, { method: "DELETE", body: { passwort } }));
+      setDeleteConfirm(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approveDeleteRequest = async () => {
+    if (!deleteRequestConfirm) return;
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/delete-requests/${deleteRequestConfirm.id}/approve`, { method: "POST", body: { passwort } }));
+      setDeleteRequestConfirm(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const rejectDeleteRequest = async (requestId) => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/delete-requests/${requestId}`, { method: "DELETE", body: { passwort } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!data) {
+    return (
+      <main className="login">
+        <form onSubmit={(e) => { e.preventDefault(); loadAdmin(); }}>
+          <div className="login-head">
+            <span className="login-badge">A</span>
+            <h1>Admin</h1>
+            <p>Gebiete verwalten</p>
+          </div>
+          <label>Admin-Passwort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" disabled={loading} /></label>
+          <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Öffnen</button>
+          <p className="error">{error}</p>
+        </form>
+      </main>
+    );
+  }
+
+  return (
+    <main className="admin-screen">
+      <div className="admin-shell">
+        <header className="admin-top">
+          <div>
+            <h1>Admin</h1>
+            <p>Gebiete und Registrierungen</p>
+          </div>
+          <button type="button" className="quiet" onClick={() => loadAdmin()} disabled={loading}>Aktualisieren</button>
+        </header>
+        {error ? <p className="error">{error}</p> : null}
+
+        <section className="admin-section">
+          <h2>Neue Gebiete</h2>
+          <div className="admin-list">
+            {data.requests.length ? data.requests.map((request) => (
+              <article className="admin-card pending" key={request.id}>
+                <div>
+                  <strong>{request.name}</strong>
+                  <span>{dateTimeLocal(request.created_at)}</span>
+                </div>
+                <div className="admin-actions">
+                  <button type="button" className="primary" onClick={() => approve(request.id)} disabled={loading}>Annehmen</button>
+                  <button type="button" className="quiet" onClick={() => reject(request.id)} disabled={loading}>Ablehnen</button>
+                </div>
+              </article>
+            )) : <p className="empty">Keine offenen Registrierungen</p>}
+          </div>
+        </section>
+
+        <section className="admin-section">
+          <h2>Löschanfragen</h2>
+          <div className="admin-list">
+            {data.deleteRequests?.length ? data.deleteRequests.map((request) => (
+              <article className="admin-card pending" key={request.id}>
+                <div>
+                  <strong>{request.name}</strong>
+                  <span>{dateTimeLocal(request.created_at)}</span>
+                </div>
+                <div className="admin-actions">
+                  <button type="button" className="danger" onClick={() => setDeleteRequestConfirm(request)} disabled={loading}>Löschen</button>
+                  <button type="button" className="quiet" onClick={() => rejectDeleteRequest(request.id)} disabled={loading}>Ablehnen</button>
+                </div>
+              </article>
+            )) : <p className="empty">Keine offenen Löschanfragen</p>}
+          </div>
+        </section>
+
+        <section className="admin-section">
+          <h2>Alle Gebiete</h2>
+          <div className="admin-list">
+            {data.reviere.map((revier) => (
+              <article className="admin-card" key={revier.id}>
+                <div>
+                  <strong>{revier.name}</strong>
+                  <span>Erstellt {dateTimeLocal(revier.created_at)}</span>
+                </div>
+                <div className="admin-actions">
+                  <button type="button" className="danger" onClick={() => setDeleteConfirm(revier)} disabled={loading}>Löschen</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+      {deleteRequestConfirm ? (
+        <ConfirmDialog
+          title="Löschanfrage bestätigen"
+          message={deleteRequestConfirm.name + " wirklich löschen?"}
+          confirmLabel="Löschen"
+          confirmClass="danger"
+          onConfirm={approveDeleteRequest}
+          onCancel={() => setDeleteRequestConfirm(null)}
+        />
+      ) : null}
+      {deleteConfirm ? (
+        <ConfirmDialog
+          title="Gebiet löschen"
+          message={deleteConfirm.name + " wirklich löschen?"}
+          confirmLabel="Löschen"
+          confirmClass="danger"
+          onConfirm={deleteRevier}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -579,6 +817,8 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
   const [viewerPasswort, setViewerPasswort] = useState(data.revier.has_viewer_passwort ? "••••••••" : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [deleteSaving, setDeleteSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const viewerTouched = useRef(false);
   const adminTouched = useRef(false);
   const submit = () => {
@@ -592,6 +832,14 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
       .catch((err) => setError(err.message))
       .finally(() => setSaving(false));
   };
+  const requestDelete = () => {
+    setDeleteSaving(true);
+    setError("");
+    api("/api/revier/delete-request", { method: "POST" })
+      .then(() => setError("Löschung angefragt."))
+      .catch((err) => setError(err.message))
+      .finally(() => setDeleteSaving(false));
+  };
   return (
     <div className="overlay">
       <form className="modal small" onSubmit={(e) => { e.preventDefault(); setConfirmAction({ message: "Account-Daten ändern?", action: submit }); }}>
@@ -601,33 +849,43 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
         <label>Gast-Passwort<input type="password" value={viewerPasswort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
         {error ? <p className="error">{error}</p> : null}
         <button type="submit" className={`primary ${saving ? "is-loading" : ""}`} disabled={saving}>Speichern</button>
+        <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => setDeleteConfirm(true)}>Löschung anfragen</button>
       </form>
+      {deleteConfirm ? (
+        <ConfirmDialog
+          title="Löschung anfragen"
+          message="Account-Löschung beim Admin anfragen?"
+          confirmLabel="Anfragen"
+          confirmClass="danger"
+          onConfirm={() => { setDeleteConfirm(false); requestDelete(); }}
+          onCancel={() => setDeleteConfirm(false)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function ConfirmDialog({ message, hint, onConfirm, onCancel }) {
-  return (
-    <div className="overlay">
-      <section className="modal small">
-        <header><h2>Bestätigen</h2></header>
-        <p className="confirm-text">{hint ? `${message} ${hint}` : message}</p>
-        <div className="confirm-actions">
-          <button type="button" onClick={onCancel}>Abbrechen</button>
-          <button type="button" className="primary" onClick={onConfirm}>Ja</button>
-        </div>
-      </section>
-    </div>
+function ConfirmDialog({ title = "Bestätigen", message, hint, confirmLabel = "Ja", confirmClass = "primary", onConfirm, onCancel }) {
+  const dialog = (
+    <dialog className="native-dialog modal small" open>
+      <header><h2>{title}</h2></header>
+      <p className="confirm-text">{hint ? `${message} ${hint}` : message}</p>
+      <div className="confirm-actions">
+        <button type="button" onClick={onCancel}>Abbrechen</button>
+        <button type="button" className={confirmClass} onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    </dialog>
   );
+  return createPortal(dialog, document.body);
 }
 
-function MapInit({ center, mapLayer }) {
+function MapInit({ center, defaultZoom, mapLayer }) {
   const map = useMap();
   const done = useRef(false);
   useEffect(() => {
     if (!done.current) {
       done.current = true;
-      map.setView(center, LAST_ZOOM, { animate: false });
+      map.setView(center, LAST_ZOOM ?? defaultZoom, { animate: false });
     }
     const onZoom = () => { LAST_ZOOM = map.getZoom(); };
     map.on("zoomend", onZoom);
@@ -681,13 +939,15 @@ function MapInteractionVisibility() {
 
 function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer, mapLayer, setMapLayer, animateMove, setAnimateMove }) {
   const visible = useVisibleData(data);
-  const center = markerCenter([...visible.kanzeln, ...visible.kameras, ...visible.abschuesse]);
+  const mapItems = [...visible.kanzeln, ...visible.kameras, ...visible.abschuesse];
+  const center = markerCenter(mapItems);
+  const defaultZoom = mapItems.length ? MARKER_MAP_ZOOM : DEFAULT_MAP_ZOOM;
   const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
   const flyToSelection = (sel) => { setAnimateMove(true); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} className="map">
-        <MapInit center={center} mapLayer={mapLayer} />
+        <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "osm" ? (
           <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
@@ -891,7 +1151,11 @@ function MapEvents({ openCreate, originPick, setOriginPick }) {
 function MapTools({ setSelfPos }) {
   const map = useMap();
   const ref = useRef(null);
+  const lastSelfPos = useRef(null);
+  const locationWatch = useRef(null);
+  const centerOnNextLocation = useRef(false);
   const [locating, setLocating] = useState(false);
+  const [tracking, setTracking] = useState(false);
   const [error, setError] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
@@ -916,33 +1180,56 @@ function MapTools({ setSelfPos }) {
     setSearchOpen(false);
     setSearchQ("");
   };
-  const locate = () => {
-    setError("");
+  useEffect(() => () => {
+    if (locationWatch.current !== null) navigator.geolocation.clearWatch(locationWatch.current);
+  }, []);
+
+  const startLocationWatch = () => {
     if (!navigator.geolocation) {
       setError("Position nicht verfügbar");
       return;
     }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
+    if (locationWatch.current !== null) return;
+    locationWatch.current = navigator.geolocation.watchPosition(
       (p) => {
         const next = [p.coords.latitude, p.coords.longitude];
+        lastSelfPos.current = next;
         setSelfPos(next);
-        map.flyTo(next, Math.max(map.getZoom(), 16));
+        setTracking(true);
         setLocating(false);
+        setError("");
+        if (centerOnNextLocation.current) {
+          centerOnNextLocation.current = false;
+          map.flyTo(next, Math.max(map.getZoom(), 16));
+        }
       },
       (err) => {
         const blocked = !window.isSecureContext || /secure|https|http/i.test(err.message || "");
         setError(blocked ? "Position nur über HTTPS" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
+        setTracking(false);
         setLocating(false);
+        locationWatch.current = null;
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 2000 }
     );
+  };
+
+  const locate = () => {
+    setError("");
+    const current = lastSelfPos.current;
+    if (current) {
+      map.flyTo(current, Math.max(map.getZoom(), 16));
+      startLocationWatch();
+      return;
+    }
+    centerOnNextLocation.current = true;
+    setLocating(true);
+    startLocationWatch();
   };
   return (
     <div className="map-tools" ref={ref}>
       <button type="button" onClick={() => setSearchOpen(true)} title="Ort suchen"><Search size={17} /></button>
       <button type="button" onClick={locate} title="Position" className={locating ? "loading" : ""}><LocateFixed size={17} /></button>
-      {locating ? <span className="map-status">Sucht...</span> : null}
       {error ? <button type="button" className="map-status error-status" onClick={() => setError("")}>{error}</button> : null}
       {searchOpen ? createPortal(
         <div className="overlay" onClick={() => { setSearchOpen(false); setSearchQ(""); }}>
@@ -1671,7 +1958,7 @@ function useVisibleData(data) {
 }
 
 function markerCenter(items) {
-  if (!items.length) return DURCHHAUSEN_CENTER;
+  if (!items.length) return DEFAULT_MAP_CENTER;
   const sum = items.reduce((acc, item) => ({
     lat: acc.lat + Number(item.position_lat),
     lng: acc.lng + Number(item.position_lng),
@@ -1761,6 +2048,7 @@ function rowMeta(tab, item, data) {
 }
 
 function Root() {
+  if (window.location.pathname === "/admin") return <AdminPage />;
   return <App />;
 }
 

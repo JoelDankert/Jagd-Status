@@ -80,6 +80,69 @@ input[type="date"], input[type="time"] { appearance: none; -webkit-appearance: n
   min-height: 18px;
   text-align: center;
 }
+.admin-screen {
+  min-height: 100%;
+  background: var(--bg);
+  padding: 22px;
+}
+.admin-shell {
+  width: min(820px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+.admin-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 0 4px;
+}
+.admin-top h1 { margin-bottom: 2px; }
+.admin-top p {
+  margin: 0;
+  color: var(--muted);
+}
+.admin-section {
+  display: grid;
+  gap: 10px;
+}
+.admin-list {
+  display: grid;
+  gap: 8px;
+}
+.admin-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.admin-card.pending {
+  border-color: color-mix(in srgb, var(--green) 36%, var(--line));
+}
+.admin-card div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.admin-card strong {
+  overflow-wrap: anywhere;
+}
+.admin-card span,
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+.admin-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 128px;
+  gap: 8px;
+}
 h1, h2, h3, p { margin-top: 0; }
 h1 { font-size: 30px; margin-bottom: 18px; letter-spacing: 0; }
 h2 { font-size: 18px; margin-bottom: 0; letter-spacing: 0; }
@@ -210,6 +273,19 @@ textarea { min-height: 80px; resize: vertical; }
   color: var(--text);
 }
 .quiet { padding: 8px 20px; }
+.admin-actions button {
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 38px !important;
+  margin: 0 !important;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 12px !important;
+}
 button:hover { filter: brightness(.98); }
 button:disabled, input:disabled {
   cursor: wait;
@@ -247,6 +323,16 @@ button:disabled, input:disabled {
 .icon-button, .map-tools button, .map-settings { width: 38px; padding: 0; }
 .primary { width: 100%; font-weight: 700; margin-top: 10px; }
 .danger { background: #f4e3df !important; color: var(--red) !important; }
+.account-delete-button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
 
 .map-shell { min-height: 0; position: relative; }
 .map { height: 100%; width: 100%; background: var(--bg); }
@@ -562,8 +648,26 @@ dt { color: var(--muted); }
 dd { margin: 0; text-align: right; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .actions button { padding: 8px 10px; }
-.confirm-actions { display: flex; gap: 8px; margin-top: 8px; }
-.confirm-actions button { flex: 1; padding: 8px 10px; min-height: 38px; border-radius: 6px; border: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.confirm-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.confirm-actions button {
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 38px;
+  margin: 0 !important;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
 .confirm-actions button:not(.primary) { border: 1px solid var(--line); background: var(--panel); }
 .confirm-text { margin: 4px 0; }
 .related { display: grid; gap: 7px; margin-top: 16px; }
@@ -593,6 +697,19 @@ dd { margin: 0; text-align: right; }
   gap: 10px;
 }
 .modal.small { width: min(360px, 100%); }
+.native-dialog {
+  color: var(--text);
+  background: var(--panel);
+  margin: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 45px rgba(0,0,0,.22);
+}
+.native-dialog::backdrop {
+  background: rgba(12, 17, 13, .38);
+}
 .choice { justify-content: flex-start; padding: 10px 12px; }
 .error { min-height: 18px; color: var(--red); font-size: 14px; margin: 0; }
 .origin-row {

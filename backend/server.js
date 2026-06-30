@@ -145,6 +145,19 @@ function setupDb() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS revier_request (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      passwort_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS revier_delete_request (
+      id TEXT PRIMARY KEY,
+      revier_id TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS kanzel (
       id TEXT PRIMARY KEY,
       revier_id TEXT NOT NULL,
@@ -286,6 +299,24 @@ function fail(res, error) {
 
 setupDb();
 
+const SYSTEM_ADMIN_PASSWORD = process.env.JAGDAPP_ADMIN_PASSWORD || "amogus";
+
+function requireSystemAdmin(req, res) {
+  if (clean(req.body?.passwort) !== SYSTEM_ADMIN_PASSWORD) {
+    res.status(401).json({ error: "Admin-Passwort falsch" });
+    return false;
+  }
+  return true;
+}
+
+function adminSnapshot() {
+  return {
+    requests: db.prepare("SELECT id, name, created_at FROM revier_request ORDER BY created_at DESC").all(),
+    deleteRequests: db.prepare("SELECT id, revier_id, name, created_at FROM revier_delete_request ORDER BY created_at DESC").all(),
+    reviere: db.prepare("SELECT id, name, created_at, updated_at FROM revier ORDER BY name").all(),
+  };
+}
+
 function migrateImages() {
   const tables = ["kanzel", "kamera", "abschuss"];
   for (const table of tables) {
@@ -312,27 +343,116 @@ function migrateImages() {
 }
 migrateImages();
 
+app.post("/api/revier-requests", async (req, res) => {
+  try {
+    const name = clean(req.body.name);
+    const passwort = clean(req.body.passwort);
+    if (!name || !passwort) throw new Error("Reviername und Passwort fehlen");
+    if (db.prepare("SELECT id FROM revier WHERE name = ?").get(name)) {
+      return res.status(409).json({ error: "Account existiert bereits" });
+    }
+
+    const stamp = now();
+    const passwortHash = await bcrypt.hash(passwort, BCRYPT_ROUNDS);
+    const existing = db.prepare("SELECT id FROM revier_request WHERE name = ?").get(name);
+    if (existing) {
+      db.prepare("UPDATE revier_request SET passwort_hash = ?, created_at = ? WHERE id = ?").run(passwortHash, stamp, existing.id);
+    } else {
+      db.prepare("INSERT INTO revier_request (id, name, passwort_hash, created_at) VALUES (?, ?, ?, ?)")
+        .run(id(), name, passwortHash, stamp);
+    }
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/admin/data", (req, res) => {
+  if (!requireSystemAdmin(req, res)) return;
+  res.json(adminSnapshot());
+});
+
+app.post("/api/admin/requests/:id/approve", (req, res) => {
+  try {
+    if (!requireSystemAdmin(req, res)) return;
+    const request = db.prepare("SELECT * FROM revier_request WHERE id = ?").get(req.params.id);
+    if (!request) return res.status(404).json({ error: "Registrierung nicht gefunden" });
+    if (db.prepare("SELECT id FROM revier WHERE name = ?").get(request.name)) {
+      db.prepare("DELETE FROM revier_request WHERE id = ?").run(request.id);
+      return res.status(409).json({ error: "Account existiert bereits" });
+    }
+    const stamp = now();
+    const revierId = id();
+    db.prepare("INSERT INTO revier (id, name, passwort_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(revierId, request.name, request.passwort_hash, stamp, stamp);
+    ensureSettings(revierId);
+    db.prepare("DELETE FROM revier_request WHERE id = ?").run(request.id);
+    res.json(adminSnapshot());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete("/api/admin/requests/:id", (req, res) => {
+  try {
+    if (!requireSystemAdmin(req, res)) return;
+    db.prepare("DELETE FROM revier_request WHERE id = ?").run(req.params.id);
+    res.json(adminSnapshot());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/admin/delete-requests/:id/approve", (req, res) => {
+  try {
+    if (!requireSystemAdmin(req, res)) return;
+    const request = db.prepare("SELECT * FROM revier_delete_request WHERE id = ?").get(req.params.id);
+    if (!request) return res.status(404).json({ error: "Löschanfrage nicht gefunden" });
+    db.prepare("DELETE FROM revier_delete_request WHERE id = ?").run(request.id);
+    db.prepare("DELETE FROM revier WHERE id = ?").run(request.revier_id);
+    for (const [token, session] of sessions.entries()) {
+      if (session.revierId === request.revier_id) sessions.delete(token);
+    }
+    res.json(adminSnapshot());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete("/api/admin/delete-requests/:id", (req, res) => {
+  try {
+    if (!requireSystemAdmin(req, res)) return;
+    db.prepare("DELETE FROM revier_delete_request WHERE id = ?").run(req.params.id);
+    res.json(adminSnapshot());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete("/api/admin/reviere/:id", (req, res) => {
+  try {
+    if (!requireSystemAdmin(req, res)) return;
+    const revier = db.prepare("SELECT id FROM revier WHERE id = ?").get(req.params.id);
+    if (!revier) return res.status(404).json({ error: "Gebiet nicht gefunden" });
+    db.prepare("DELETE FROM revier_delete_request WHERE revier_id = ?").run(req.params.id);
+    db.prepare("DELETE FROM revier WHERE id = ?").run(req.params.id);
+    for (const [token, session] of sessions.entries()) {
+      if (session.revierId === req.params.id) sessions.delete(token);
+    }
+    res.json(adminSnapshot());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 app.post("/api/login", async (req, res) => {
   try {
     const name = clean(req.body.name);
     const passwort = clean(req.body.passwort);
     if (!name || !passwort) throw new Error("Login fehlt");
-    if (name !== "Durchhausen") return res.status(401).json({ error: "Login falsch" });
-
-    let revier = db.prepare("SELECT * FROM revier WHERE name = ?").get(name);
+    const revier = db.prepare("SELECT * FROM revier WHERE name = ?").get(name);
     if (!revier) {
-      const existing = db.prepare("SELECT * FROM revier ORDER BY created_at LIMIT 1").get();
-      const stamp = now();
-      if (existing) {
-        db.prepare("UPDATE revier SET name = ?, updated_at = ? WHERE id = ?").run("Durchhausen", stamp, existing.id);
-        revier = db.prepare("SELECT * FROM revier WHERE id = ?").get(existing.id);
-      } else {
-        const revierId = id();
-        db.prepare("INSERT INTO revier (id, name, passwort_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-          .run(revierId, "Durchhausen", await bcrypt.hash(passwort, BCRYPT_ROUNDS), stamp, stamp);
-        ensureSettings(revierId);
-        revier = db.prepare("SELECT * FROM revier WHERE id = ?").get(revierId);
-      }
+      return res.status(404).json({ error: "Account nicht vorhanden", code: "account_not_found" });
     }
 
     const [adminOk, viewerOk] = await Promise.all([
@@ -404,6 +524,24 @@ app.get("/api/revier", requireAuth, (req, res) => {
   res.json({
     revier: db.prepare("SELECT id, name, reviergrenze FROM revier WHERE id = ?").get(req.revierId),
   });
+});
+
+app.post("/api/revier/delete-request", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const revier = db.prepare("SELECT id, name FROM revier WHERE id = ?").get(req.revierId);
+    if (!revier) return res.status(404).json({ error: "Gebiet nicht gefunden" });
+    const stamp = now();
+    const existing = db.prepare("SELECT id FROM revier_delete_request WHERE revier_id = ?").get(req.revierId);
+    if (existing) {
+      db.prepare("UPDATE revier_delete_request SET name = ?, created_at = ? WHERE id = ?").run(revier.name, stamp, existing.id);
+    } else {
+      db.prepare("INSERT INTO revier_delete_request (id, revier_id, name, created_at) VALUES (?, ?, ?, ?)")
+        .run(id(), req.revierId, revier.name, stamp);
+    }
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    fail(res, error);
+  }
 });
 
 app.patch("/api/revier", requireAuth, requireAdmin, async (req, res) => {
