@@ -10,26 +10,28 @@ import "./styles.css";
 let LAST_ZOOM = null;
 
 const api = async (path, options = {}) => {
-  const res = await fetch(path, {
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const text = await res.text();
-  let json;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`);
+  const doFetch = async () => {
+    const res = await fetch(path, {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      ...options,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const text = await res.text();
+    let json;
+    try { json = text ? JSON.parse(text) : {}; } catch { throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`); }
+    if (!res.ok) { const error = new Error(json.error || "Fehler"); error.status = res.status; error.code = json.code; throw error; }
+    return json;
+  };
+  try { return await doFetch(); } catch (err) {
+    if (err.status === 401 && path !== "/api/login") {
+      const saved = (() => { try { return JSON.parse(localStorage.getItem("jagd-credentials")); } catch { return null; } })();
+      if (saved?.name && saved?.passwort) {
+        try { await fetch("/api/login", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: saved.name, passwort: saved.passwort }) }); return await doFetch(); } catch {}
+      }
+    }
+    throw err;
   }
-  if (!res.ok) {
-    const error = new Error(json.error || "Fehler");
-    error.status = res.status;
-    error.code = json.code;
-    throw error;
-  }
-  return json;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -60,8 +62,8 @@ const MAP_PANES = {
   self: "jagd-self",
 };
 const MAP_PANE_STYLES = {
-  [MAP_PANES.lines]: { zIndex: 430, overflow: "visible" },
-  [MAP_PANES.kanzeln]: { zIndex: 610, overflow: "visible" },
+  [MAP_PANES.lines]: { zIndex: 610, overflow: "visible" },
+  [MAP_PANES.kanzeln]: { zIndex: 640, overflow: "visible" },
   [MAP_PANES.kameras]: { zIndex: 620, overflow: "visible" },
   [MAP_PANES.abschuesse]: { zIndex: 630, overflow: "visible" },
   [MAP_PANES.aktivitaeten]: { zIndex: 600, overflow: "visible" },
@@ -365,7 +367,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const labelHtml = "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerInitial(item?.wildart, "A")}</span>`,
+    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -485,6 +487,7 @@ function App() {
   };
 
   const openSelection = (next) => {
+    if (originPick) return;
     setSettingsOpen(false);
     setCreateAt(null);
     setForm(null);
@@ -1027,8 +1030,8 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-                if (originPick) setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
-                else flyToSelection({ type: "kanzel", id: kanzel.id });
+                if (originPick && originPick.mode !== "move") setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
+                else if (!originPick) flyToSelection({ type: "kanzel", id: kanzel.id });
               },
             }}
           />
@@ -1518,7 +1521,6 @@ function initialFormValues(form) {
     const typ = item.typ || "";
     const isBuiltin = MARKER_TYPEN.includes(typ);
     return {
-      name: item.name || "",
       typ: isBuiltin ? typ : (typ ? "Sonstiges" : ""),
       typ_sonstiges: isBuiltin ? "" : (typ || ""),
       bild_data: item.bild_data || "",
@@ -1578,6 +1580,14 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     if (!form.item) return "";
     return form.item.schuss_kanzel_id || "";
   });
+  const sortedKanzeln = useMemo(() => {
+    const p = form.point;
+    return [...data.kanzeln].sort((a, b) => {
+      const da = Math.hypot(a.position_lat - p.lat, a.position_lng - p.lng);
+      const db = Math.hypot(b.position_lat - p.lat, b.position_lng - p.lng);
+      return da - db;
+    });
+  }, [data.kanzeln, form.point.lat, form.point.lng]);
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const setImage = async (index, file) => {
     if (!file) return;
@@ -1637,13 +1647,16 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
       schuss_lng: o.lng ?? "",
       schuss_kanzel_id: "",
     }));
+    if (o.type === "kanzel") setSelectedKanzelId(o.id);
     setOriginPick(null);
   }, [originPick, formId, setOriginPick]);
 
   const submit = async (e) => {
     e.preventDefault();
-    if (form.type === "kanzel" || form.type === "kamera") {
+    if (form.type === "kanzel") {
       if (!values.name.trim()) { setError("Name fehlt"); return; }
+    } else if (form.type === "kamera") {
+      if (!values.typ) { setError("Typ fehlt"); return; }
     } else if (form.type === "aktivitaet") {
       if (!values.name.trim()) { setError("Name fehlt"); return; }
       if (!values.dauer_stunden) { setError("Dauer fehlt"); return; }
@@ -1656,6 +1669,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
+      if (form.type === "kamera") body.name = body.typ;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
       delete body.wildart_sonstiges;
       const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : form.type === "aktivitaet" ? "/api/aktivitaeten" : "/api/abschuesse";
@@ -1675,14 +1689,14 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
         {form.type !== "aktivitaet" ? <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} /> : null}
         {form.type === "kanzel" || form.type === "kamera" ? (
           <>
-            <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
             {form.type === "kamera" ? (
               <>
-                <label>Typ<select value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{MARKER_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                <label>Typ<select required value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{MARKER_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
                 {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
               </>
             ) : (
               <>
+                <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
                 <label>Typ<select value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{KANZEL_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
                 {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
               </>
@@ -1742,7 +1756,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                 schuss_kanzel_id: "",
               }));
               setOriginLabel("Punkt gewählt");
-            }}><option value="">Kanzel</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
+            }}><option value="">{originLabel === "Punkt gewählt" && !selectedKanzelId ? "Frei ausgewählt" : "Kanzel auswählen"}</option>{sortedKanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
             <div className="origin-row">
               {originLabel === "Punkt gewählt" ? (
                 <button type="button" className="origin-remove" onClick={() => {
@@ -1751,14 +1765,17 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                   setSelectedKanzelId("");
                 }}><Trash2 size={16} /></button>
               ) : (
-                <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung frei wählen</button>
+                <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Von der Karte auswählen</button>
               )}
             </div>
             <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         )}
         <p className="error">{error}</p>
-        <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
+        <div className="form-buttons">
+          <button className="quiet move-button" type="button" disabled={saving || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: form.point, origin: null })}>Verschieben</button>
+          <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
+        </div>
       </form>
     </div>
   );
@@ -1799,7 +1816,7 @@ function ImageSlots({ images, setImage, clearImage, loading }) {
   return (
     <div className="image-slots">
       {[0, 1, 2].map((i) => (
-        <div key={i} className={`image-slot ${images[i] ? "filled" : ""} ${loading === i ? "loading" : ""}`}>
+        <div key={i} className={`image-slot ${images[i] ? "filled" : ""} ${loading === i ? "loading" : ""}`} style={images[i] ? { backgroundImage: `url(${imageSrc(images[i])})` } : undefined}>
           {images[i] ? (
             <button type="button" className="image-remove" onClick={() => clearImage(i)} aria-label="Bild entfernen"><Trash2 size={16} /></button>
           ) : (
@@ -1916,7 +1933,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
             </div>
           ) : null}
           <div className="detail-heading">
-            <h2>{item.name || item.wildart}</h2>
+            <h2>{selected.type === "kamera" ? (item.typ || item.name) : (item.name || item.wildart)}</h2>
             {item.status === "archiviert" ? <p className="muted">Archiviert</p> : null}
           </div>
         </div>
@@ -2022,7 +2039,7 @@ function Rows({ selected, item, data }) {
       </dl>
     );
   }
-  return <dl>{item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
+  return <dl>{selected.type !== "kamera" && item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
 }
 
 function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction, setAnimateMove }) {
@@ -2078,7 +2095,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       </div>
       </label>) : null}
       <section className="rows">{items.map((item) => <article key={item.id} className={item.status === "archiviert" ? "is-archived" : ""}>
-        <div><strong>{item.name || item.wildart}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
+        <div><strong>{tab === "kameras" ? (item.typ || item.name) : (item.name || item.wildart)}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
         <div className="row-actions">
           <button type="button" onClick={() => { setAnimateMove(false); openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
         </div>
