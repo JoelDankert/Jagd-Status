@@ -219,8 +219,7 @@ function setupDb() {
       name TEXT NOT NULL,
       position_lat REAL NOT NULL,
       position_lng REAL NOT NULL,
-      dauer_tage INTEGER NOT NULL DEFAULT 3,
-      dauer_stunden INTEGER NOT NULL DEFAULT 0,
+      dauer_stunden REAL NOT NULL DEFAULT 0,
       richtung_grad REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -373,7 +372,7 @@ app.get("/api/map-data", requireAuth, (req, res) => {
   const expired = [];
   for (const a of aktivitaetenAll) {
     const created = new Date(a.created_at).getTime();
-    const durationMs = (a.dauer_tage * 24 + a.dauer_stunden) * 3600000;
+    const durationMs = (Number(a.dauer_stunden) || 24) * 3600000;
     if (nowMs - created > durationMs) expired.push(a.id);
     else aktivitaeten.push(a);
   }
@@ -587,13 +586,12 @@ app.post("/api/aktivitaeten", requireAuth, requireAdmin, (req, res) => {
     if (!name) throw new Error("Name fehlt");
     const lat = num(req.body.position_lat, "Position");
     const lng = num(req.body.position_lng, "Position");
-    const dauer_tage = Math.max(0, Math.min(30, Number(req.body.dauer_tage) || 3));
-    const dauer_stunden = Math.max(0.1, Math.min(720, Number(req.body.dauer_stunden) || 24));
+    const dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body.dauer_stunden) || 24));
     const richtung_grad = optionalNum(req.body.richtung_grad);
     const stamp = now();
     const itemId = id();
-    db.prepare("INSERT INTO aktivitaet (id, revier_id, name, position_lat, position_lng, dauer_tage, dauer_stunden, richtung_grad, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-      .run(itemId, req.revierId, name, lat, lng, dauer_tage, dauer_stunden, richtung_grad, stamp, stamp);
+    db.prepare("INSERT INTO aktivitaet (id, revier_id, name, position_lat, position_lng, dauer_stunden, richtung_grad, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(itemId, req.revierId, name, lat, lng, dauer_stunden, richtung_grad, stamp, stamp);
     invalidateCache(req.revierId);
     res.status(201).json({ id: itemId });
   } catch (error) { fail(res, error); }
@@ -605,11 +603,10 @@ app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
     if (!item) return res.status(404).json({ error: "Nicht gefunden" });
     const set = {};
     const vals = [];
-    for (const key of ["name", "dauer_tage", "dauer_stunden", "richtung_grad"]) {
+    for (const key of ["name", "dauer_stunden", "richtung_grad"]) {
       if (!(key in req.body)) continue;
       if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
-      else if (key === "dauer_stunden") set.dauer_stunden = Math.max(1, Math.min(720, Number(req.body[key]) || 24));
-      else if (key === "dauer_tage") set.dauer_tage = Math.max(0, Math.min(30, Number(req.body[key]) || 0));
+      else if (key === "dauer_stunden") set.dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body[key]) || 24));
       else set.name = clean(req.body[key]);
     }
     if (!Object.keys(set).length) return res.json({ ok: true });

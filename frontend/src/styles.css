@@ -254,6 +254,9 @@ button:disabled, input:disabled {
 .map.is-map-interacting .pin.aktivitaet {
   opacity: 0 !important;
 }
+.map.is-map-panning .pin.aktivitaet .pin-pulse {
+  animation-play-state: paused !important;
+}
 .leaflet-tile { filter: saturate(.82) contrast(.98); }
 
 .leaflet-control-attribution {
@@ -379,14 +382,18 @@ button:disabled, input:disabled {
 .pin.abschuss.wild-taube { --pin-bg: #ab47bc; }
 .pin.abschuss.wild-sonstiges { --pin-bg: #c2185b; }
 .pin.aktivitaet {
-  width: 60px !important;
-  height: 60px !important;
+  width: 48px !important;
+  height: 48px !important;
   background: transparent;
   border: 0;
   overflow: visible;
 }
 .pin.aktivitaet span {
   display: none;
+}
+.pin.aktivitaet .activity-pulse-layer {
+  grid-area: 1 / 1;
+  pointer-events: none;
 }
 .pin.aktivitaet .pin-pulse {
   background: transparent;

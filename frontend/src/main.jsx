@@ -36,7 +36,8 @@ const MIN_PULSE_BPM = 20;
 const ACTIVITY_PULSE_COUNT = 8;
 const ACTIVITY_BASE_ZOOM = 14;
 const ACTIVITY_BASE_DIAMETER_PX = 60;
-const ACTIVITY_MAX_DIAMETER_PX = 240;
+const ACTIVITY_MAX_DIAMETER_PX = 420;
+const ACTIVITY_HITBOX_PX = 48;
 const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
 const ACTIVITY_PING_RADIUS_METERS = Math.round(
   (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DURCHHAUSEN_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
@@ -252,7 +253,7 @@ function shotPulseTiming(item) {
 function aktivitaetPulseTiming(item) {
   if (!item) return null;
   const created = new Date(item.created_at).getTime();
-  const durationMs = ((item.dauer_stunden || 24) + (item.dauer_tage || 0) * 24) * 3600000;
+  const durationMs = (Number(item.dauer_stunden) || 24) * 3600000;
   const age = Math.max(0, Date.now() - created);
   const remainingMs = Math.max(0, durationMs - age);
   if (remainingMs <= 0) return null;
@@ -287,7 +288,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const isActivity = type === "aktivitaet";
   const kameraSize = archived ? 9 : 12;
   const otherSize = archived ? 18 : 25;
-  const size = type === "kamera" ? kameraSize : isActivity ? 60 : otherSize;
+  const size = type === "kamera" ? kameraSize : isActivity ? ACTIVITY_HITBOX_PX : otherSize;
   const pulseName = pulse ? `${isActivity ? "act" : "shot"}-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
   const pulseCount = isActivity && pulse?.pulseCount ? pulse.pulseCount : 8;
   const loopMs = pulse ? (isActivity ? pulse.cycleMs * pulseCount : pulse.cycleMs * pulseCount) : 0;
@@ -312,7 +313,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
       : `opacity:0;animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms`;
     return `<i class="pin-pulse" style="${animStyle}"></i>`;
   }).join("") : "";
-  const pulseHtml = pulse ? `${pulseStyle}${isActivity ? `<div style="width:100%;height:100%;overflow:visible;display:grid;place-items:center;${dirStyle}">${pulseIcons}</div>` : pulseIcons}` : "";
+  const pulseHtml = pulse ? `${pulseStyle}${isActivity ? `<div class="activity-pulse-layer" style="width:100%;height:100%;overflow:visible;display:grid;place-items:center;${dirStyle}">${pulseIcons}</div>` : pulseIcons}` : "";
   const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
   const labelHtml = "";
@@ -658,14 +659,21 @@ function MapInteractionVisibility() {
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => container.classList.remove("is-map-interacting"), 80);
     };
+    const pausePulses = () => container.classList.add("is-map-panning");
+    const resumePulses = () => container.classList.remove("is-map-panning");
 
     map.on("zoomstart", showLess);
     map.on("zoomend", showAll);
+    map.on("movestart", pausePulses);
+    map.on("moveend", resumePulses);
     return () => {
       clearTimeout(settleTimer);
       container.classList.remove("is-map-interacting");
+      container.classList.remove("is-map-panning");
       map.off("zoomstart", showLess);
       map.off("zoomend", showAll);
+      map.off("movestart", pausePulses);
+      map.off("moveend", resumePulses);
     };
   }, [map]);
   return null;
@@ -776,7 +784,7 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSele
   const clickRef = useRef(null);
   const pulse = useMemo(
     () => aktivitaetPulseTiming(aktivitaet),
-    [aktivitaet.created_at, aktivitaet.dauer_stunden, aktivitaet.dauer_tage]
+    [aktivitaet.created_at, aktivitaet.dauer_stunden]
   );
 
   useEffect(() => {
@@ -807,10 +815,12 @@ const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, openSele
       const center = map.latLngToLayerPoint([lat, lng]);
       const east = map.latLngToLayerPoint(destinationPoint(lat, lng, ACTIVITY_PING_RADIUS_METERS, 90));
       const size = Math.min(ACTIVITY_MAX_DIAMETER_PX, Math.max(12, center.distanceTo(east) * 2));
-      icon.style.setProperty("width", `${size}px`, "important");
-      icon.style.setProperty("height", `${size}px`, "important");
-      icon.style.marginLeft = `${-size / 2}px`;
-      icon.style.marginTop = `${-size / 2}px`;
+      const layer = icon.querySelector(".activity-pulse-layer");
+      if (!layer) return;
+      layer.style.width = `${size}px`;
+      layer.style.height = `${size}px`;
+      layer.style.marginLeft = `${(ACTIVITY_HITBOX_PX - size) / 2}px`;
+      layer.style.marginTop = `${(ACTIVITY_HITBOX_PX - size) / 2}px`;
     };
 
     const updateSize = () => {
@@ -1064,6 +1074,22 @@ function CreateWindow({ point, close, openForm }) {
   );
 }
 
+
+function activityTotalHours(item) {
+  return Number(item.dauer_stunden) || 24;
+}
+
+function activityRemainingHours(item) {
+  const created = new Date(item.created_at).getTime();
+  if (!Number.isFinite(created)) return activityTotalHours(item);
+  const remainingMs = Math.max(0, activityTotalHours(item) * 3600000 - (Date.now() - created));
+  return remainingMs / 3600000;
+}
+
+function formatActivityHours(hours) {
+  return Number(hours).toLocaleString("de", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function initialFormValues(form) {
   const item = form.item || {};
   if (form.type === "kanzel") {
@@ -1095,7 +1121,7 @@ function initialFormValues(form) {
   if (form.type === "aktivitaet") {
     return {
       name: item.name || "",
-      dauer_stunden: item.dauer_stunden ?? 24,
+      dauer_stunden: form.item ? Math.max(0.01, Math.round(activityRemainingHours(item) * 100) / 100) : (item.dauer_stunden ?? 24),
       richtung_grad: item.richtung_grad ?? "",
     };
   }
@@ -1207,7 +1233,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     setSaving(true);
     setError("");
     try {
-      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng, dauer_tage: form.type === "aktivitaet" ? 0 : values.dauer_tage };
+      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = body.wildart_sonstiges;
@@ -1246,7 +1272,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
         ) : form.type === "aktivitaet" ? (
           <>
             <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Dauer (Stunden)<input type="number" min="0.1" max="720" step="any" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", e.target.value === "" ? "" : Number(e.target.value))} /></label>
+            <label>Dauer (Stunden)<input type="number" min="0.01" max="720" step="0.01" inputMode="decimal" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", e.target.value === "" ? "" : Number(e.target.value))} /></label>
             <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
               <option value="">Keine</option>
               <option value="0">N</option>
@@ -1548,13 +1574,10 @@ function Rows({ selected, item, data }) {
   const distance = selected.type === "abschuss" ? shotDistance(item, data) : null;
   const windText = item.wind || formatWind(item);
   if (selected.type === "aktivitaet") {
-    const created = new Date(item.created_at).getTime();
-    const durationMs = ((item.dauer_stunden || 24) + (item.dauer_tage || 0) * 24) * 3600000;
-    const remainingMs = Math.max(0, durationMs - (Date.now() - created));
-    const remainingH = Math.round(remainingMs / 3600000);
+    const remainingH = activityRemainingHours(item);
     return (
       <dl>
-        <dt>Dauer</dt><dd>{remainingMs <= 0 ? "abgelaufen" : `${remainingH} Std.`}</dd>
+        <dt>Dauer</dt><dd>{remainingH <= 0 ? "abgelaufen" : `${formatActivityHours(remainingH)} Stunden`}</dd>
         {item.richtung_grad !== null && item.richtung_grad !== undefined ? <><dt>Richtung</dt><dd>{windDirection(Number(item.richtung_grad))}</dd></> : null}
         <dt>Position</dt><dd>{positionText(item)}</dd>
         <dt>Erstellt</dt><dd>{new Date(item.created_at).toLocaleString("de")}</dd>
