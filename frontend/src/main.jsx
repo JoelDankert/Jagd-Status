@@ -37,6 +37,7 @@ const api = async (path, options = {}) => {
 const today = () => new Date().toISOString().slice(0, 10);
 
 const DEFAULT_MAP_CENTER = [51.1657, 10.4515];
+const WORLD_BOUNDS = [[-85.05112878, -180], [85.05112878, 180]];
 const DEFAULT_MAP_ZOOM = 6;
 const MARKER_MAP_ZOOM = 14;
 const IMAGE_MAX_ZOOM = 8;
@@ -1007,13 +1008,13 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} maxBounds={WORLD_BOUNDS} maxBoundsViscosity={1} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "osm" ? (
-          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} noWrap bounds={WORLD_BOUNDS} />
         ) : (
-          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} />
+          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} noWrap bounds={WORLD_BOUNDS} />
         )}
         <MapEvents data={data} openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
