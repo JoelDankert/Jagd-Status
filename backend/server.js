@@ -19,6 +19,14 @@ const host = process.env.HOST || "10.66.66.1";
 const port = Number(process.env.PORT || 3067);
 const sessions = new Map();
 const BCRYPT_ROUNDS = 10;
+const TEXT_LIMITS = {
+  revier: 80,
+  passwort: 128,
+  itemName: 60,
+  custom: 40,
+  person: 80,
+  shortText: 120,
+};
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(imageDir, { recursive: true });
@@ -43,6 +51,18 @@ function clean(value) {
   return String(value ?? "").trim();
 }
 
+function limitText(value, max) {
+  return clean(value).slice(0, max);
+}
+
+function fieldLimit(key) {
+  if (key === "name") return TEXT_LIMITS.itemName;
+  if (key === "typ" || key === "wildart") return TEXT_LIMITS.custom;
+  if (key === "schuetz_name") return TEXT_LIMITS.person;
+  if (key === "wetter" || key === "wind") return TEXT_LIMITS.shortText;
+  return 200;
+}
+
 function revierNameKey(value) {
   return clean(value).normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("de");
 }
@@ -63,14 +83,18 @@ function findRevierRequestByName(name) {
     .find((row) => revierNameKey(row.name) === key) || null;
 }
 
-function optional(value) {
-  const valueText = clean(value);
+function optional(value, max = 200) {
+  const valueText = limitText(value, max);
   return valueText || null;
 }
 
-function decimalText(value) {
+function decimalText(value, label = "Zahl", max = 999) {
   const valueText = clean(value).replace(",", ".");
-  return valueText || null;
+  if (!valueText) return null;
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(valueText)) throw new Error(`${label} ungültig`);
+  const parsed = Number(valueText);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > max) throw new Error(`${label} ungültig`);
+  return String(parsed);
 }
 
 function num(value, label) {
@@ -79,10 +103,19 @@ function num(value, label) {
   return parsed;
 }
 
-function optionalNum(value) {
+function optionalNum(value, label = null, max = null) {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(String(value).replace(",", "."));
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed) || (label && parsed < 0) || (max !== null && parsed > max)) {
+    if (label) throw new Error(`${label} ungültig`);
+    return null;
+  }
+  return parsed;
+}
+
+function durationHours(value) {
+  const parsed = Number(String(value ?? "").replace(",", "."));
+  return Math.max(0.01, Math.min(720, Number.isFinite(parsed) ? parsed : 24));
 }
 
 function itemStatus(value) {
@@ -415,8 +448,8 @@ migrateImages();
 
 app.post("/api/revier-requests", async (req, res) => {
   try {
-    const name = clean(req.body.name);
-    const passwort = clean(req.body.passwort);
+    const name = limitText(req.body.name, TEXT_LIMITS.revier);
+    const passwort = limitText(req.body.passwort, TEXT_LIMITS.passwort);
     if (!name || !passwort) throw new Error("Reviername und Passwort fehlen");
     if (findRevierByName(name)) {
       return res.status(409).json({ error: "Account existiert bereits" });
@@ -517,8 +550,8 @@ app.delete("/api/admin/reviere/:id", (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   try {
-    const name = clean(req.body.name);
-    const passwort = clean(req.body.passwort);
+    const name = limitText(req.body.name, TEXT_LIMITS.revier);
+    const passwort = limitText(req.body.passwort, TEXT_LIMITS.passwort);
     if (!name || !passwort) throw new Error("Login fehlt");
     const revier = findRevierByName(name);
     if (!revier) {
@@ -616,15 +649,16 @@ app.post("/api/revier/delete-request", requireAuth, requireAdmin, (req, res) => 
 
 app.patch("/api/revier", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const name = clean(req.body.name);
+    const name = limitText(req.body.name, TEXT_LIMITS.revier);
     if (!name) throw new Error("Name fehlt");
     const existing = findRevierByName(name, req.revierId);
     if (existing) throw new Error("Name bereits vergeben");
     const values = { name, updated_at: now() };
-    const passwort = clean(req.body.passwort);
+    const passwort = limitText(req.body.passwort, TEXT_LIMITS.passwort);
     if (passwort) values.passwort_hash = await bcrypt.hash(passwort, BCRYPT_ROUNDS);
     if ("viewer_passwort" in req.body) {
-      values.viewer_passwort_hash = req.body.viewer_passwort ? await bcrypt.hash(clean(req.body.viewer_passwort), BCRYPT_ROUNDS) : null;
+      const viewerPasswort = limitText(req.body.viewer_passwort, TEXT_LIMITS.passwort);
+      values.viewer_passwort_hash = viewerPasswort ? await bcrypt.hash(viewerPasswort, BCRYPT_ROUNDS) : null;
     }
     const set = Object.keys(values).map((k) => `${k} = ?`).join(", ");
     db.prepare(`UPDATE revier SET ${set} WHERE id = ?`).run(...Object.values(values), req.revierId);
@@ -660,8 +694,8 @@ app.post("/api/settings", requireAuth, (req, res) => {
 function createHandler(table, extraFields = []) {
   return (req, res) => {
     try {
-      const name = clean(req.body.name);
-      if (table === "kamera" && !clean(req.body.typ)) throw new Error("Typ fehlt");
+      const name = limitText(req.body.name, TEXT_LIMITS.itemName);
+      if (table === "kamera" && !limitText(req.body.typ, TEXT_LIMITS.custom)) throw new Error("Typ fehlt");
       if (!name && table !== "abschuss" && table !== "kamera") throw new Error("Name fehlt");
       const lat = req.body.position_lat != null ? num(req.body.position_lat, "Position") : null;
       const lng = req.body.position_lng != null ? num(req.body.position_lng, "Position") : null;
@@ -669,7 +703,7 @@ function createHandler(table, extraFields = []) {
       const itemId = id();
 
       if (table === "abschuss") {
-        const wildart = clean(req.body.wildart);
+        const wildart = limitText(req.body.wildart, TEXT_LIMITS.custom);
         if (!wildart) throw new Error("Wildart fehlt");
       }
 
@@ -692,17 +726,18 @@ function createHandler(table, extraFields = []) {
         if (f === "created_at" || f === "updated_at") return stamp;
         if (f === "status") return itemStatus(req.body.status);
         if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(f))
-          return optionalNum(req.body[f]);
-        if (f === "alter_text") return decimalText(req.body[f]);
+          return f === "gewicht_kg" ? optionalNum(req.body[f], "Gewicht", 1000) : optionalNum(req.body[f]);
+        if (f === "alter_text") return decimalText(req.body[f], "Alter", 99);
         if (f === "datum") return clean(req.body.datum) || now().slice(0, 10);
         if (f === "uhrzeit") return table === "abschuss" ? clean(req.body.uhrzeit) : null;
-        if (f === "wildart" && table === "abschuss") return clean(req.body.wildart);
-        if (f === "schuetz_name" && table === "abschuss") return clean(req.body.schuetz_name);
-        if (f === "kanzel_id" || f === "schuss_kanzel_id" || f === "typ")
+        if (f === "wildart" && table === "abschuss") return limitText(req.body.wildart, TEXT_LIMITS.custom);
+        if (f === "schuetz_name" && table === "abschuss") return limitText(req.body.schuetz_name, TEXT_LIMITS.person);
+        if (f === "kanzel_id" || f === "schuss_kanzel_id")
           return optional(req.body[f]);
+        if (f === "typ") return optional(req.body[f], TEXT_LIMITS.custom);
         if (f === "notiz") return truncNote(req.body[f]);
         if (IMAGE_FIELDS.includes(f)) return optional(req.body[f]);
-        return clean(req.body[f]);
+        return limitText(req.body[f], fieldLimit(f));
       });
 
       db.prepare(`INSERT INTO ${table} (${fields.join(", ")}) VALUES (${fields.map(() => "?").join(", ")})`)
@@ -735,17 +770,17 @@ function patchHandler(table, allowed) {
             values[key] = saveImage(val, `${table}_${req.params.id}`);
           }
         } else if (["position_lat", "position_lng", "schuss_lat", "schuss_lng", "gewicht_kg"].includes(key)) {
-          values[key] = optionalNum(val);
+          values[key] = key === "gewicht_kg" ? optionalNum(val, "Gewicht", 1000) : optionalNum(val);
         } else if (key === "status") {
           values[key] = itemStatus(val);
         } else if (key === "alter_text") {
-          values[key] = decimalText(val);
+          values[key] = decimalText(val, "Alter", 99);
         } else if (key.endsWith("_id") || key === "typ") {
-          values[key] = optional(val);
+          values[key] = optional(val, fieldLimit(key));
         } else if (key === "notiz") {
           values[key] = truncNote(val);
         } else {
-          values[key] = clean(val);
+          values[key] = limitText(val, fieldLimit(key));
         }
       }
       if (!Object.keys(values).length) return res.json({ ok: true });
@@ -793,11 +828,11 @@ app.delete("/api/abschuesse/:id", requireAuth, requireAdmin, removeHandler("absc
 
 app.post("/api/aktivitaeten", requireAuth, requireAdmin, (req, res) => {
   try {
-    const name = clean(req.body.name);
+    const name = limitText(req.body.name, TEXT_LIMITS.itemName);
     if (!name) throw new Error("Name fehlt");
     const lat = num(req.body.position_lat, "Position");
     const lng = num(req.body.position_lng, "Position");
-    const dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body.dauer_stunden) || 24));
+    const dauer_stunden = durationHours(req.body.dauer_stunden);
     const richtung_grad = optionalNum(req.body.richtung_grad);
     const notiz = truncNote(req.body.notiz);
     const stamp = now();
@@ -819,9 +854,9 @@ app.patch("/api/aktivitaeten/:id", requireAuth, requireAdmin, (req, res) => {
       if (!(key in req.body)) continue;
       if (key === "position_lat" || key === "position_lng") set[key] = optionalNum(req.body[key]);
       else if (key === "richtung_grad") set.richtung_grad = optionalNum(req.body[key]);
-      else if (key === "dauer_stunden") set.dauer_stunden = Math.max(0.01, Math.min(720, Number(req.body[key]) || 24));
+      else if (key === "dauer_stunden") set.dauer_stunden = durationHours(req.body[key]);
       else if (key === "notiz") set.notiz = truncNote(req.body[key]);
-      else set.name = clean(req.body[key]);
+      else set.name = limitText(req.body[key], TEXT_LIMITS.itemName);
     }
     if (!Object.keys(set).length) return res.json({ ok: true });
     if ("dauer_stunden" in set) set.created_at = now();

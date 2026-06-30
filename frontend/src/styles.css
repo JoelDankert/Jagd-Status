@@ -172,7 +172,7 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   border-color: var(--green);
 }
-textarea { min-height: 80px; resize: vertical; }
+textarea { min-height: 80px; resize: none; }
 .native-date-time {
   position: relative;
   display: block;
@@ -349,24 +349,30 @@ button:disabled, input:disabled {
 .primary { width: 100%; font-weight: 700; margin-top: 10px; }
 .danger { background: #f4e3df !important; color: var(--red) !important; }
 .form-buttons {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 7px;
   margin-top: 10px;
+}
+.form-action-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 7px;
 }
 .form-buttons button {
   width: 100%;
   min-height: 38px;
   margin-top: 0;
   border-radius: 6px;
+  padding: 8px 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
+  white-space: nowrap;
+  min-width: 0;
 }
-.form-buttons .move-button {
-  padding: 8px 12px;
-  margin-bottom: 0;
+.form-action-row button {
+  font-size: 13px;
 }
 .account-delete-button {
   width: 100%;

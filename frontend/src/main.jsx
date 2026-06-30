@@ -36,8 +36,28 @@ const api = async (path, options = {}) => {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+const INPUT_LIMITS = {
+  revier: 80,
+  passwort: 128,
+  itemName: 60,
+  custom: 40,
+  person: 80,
+  shortText: 120,
+  search: 180,
+  decimal: 10,
+  age: 10,
+};
+
+function decimalInput(value, max = INPUT_LIMITS.decimal) {
+  let text = String(value ?? "").replace(/[^0-9,.]/g, "");
+  const firstSeparator = text.search(/[,.]/);
+  if (firstSeparator !== -1) {
+    text = text.slice(0, firstSeparator + 1) + text.slice(firstSeparator + 1).replace(/[,.]/g, "");
+  }
+  return text.slice(0, max);
+}
+
 const DEFAULT_MAP_CENTER = [51.1657, 10.4515];
-const WORLD_BOUNDS = [[-85.05112878, -180], [85.05112878, 180]];
 const DEFAULT_MAP_ZOOM = 6;
 const MARKER_MAP_ZOOM = 14;
 const IMAGE_MAX_ZOOM = 8;
@@ -568,7 +588,7 @@ function App() {
       {settingsOpen && !originPick && <SettingsPanel data={data} load={load} close={() => setSettingsOpen(false)} isViewer={isViewer} />}
       {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={isViewer ? () => {} : openForm} isViewer={isViewer} setConfirmAction={setConfirmAction} />}
       {createAt && !isViewer && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={openForm} />}
-      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} setConfirmAction={setConfirmAction} />}
+      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} refresh={load} setConfirmAction={setConfirmAction} />}
 
       {accountOpen && <AccountPanel data={data} load={load} close={() => setAccountOpen(false)} setConfirmAction={setConfirmAction} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} message={confirmAction.message} hint={confirmAction.hint} confirmLabel={confirmAction.confirmLabel} confirmClass={confirmAction.confirmClass} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
@@ -626,8 +646,8 @@ function Login({ error, onLogin, onRequestRegistration }) {
           <h1>{name || "Jagd"}</h1>
           <p>Revierverwaltung</p>
         </div>
-        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" disabled={loading} /></label>
-        <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" disabled={loading} /></label>
+        <label>Reviername<input value={name} maxLength={INPUT_LIMITS.revier} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" disabled={loading} /></label>
+        <label>Revierpasswort<input value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" disabled={loading} /></label>
         <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Anmelden</button>
         <p className="error">{error}</p>
       </form>
@@ -739,7 +759,7 @@ function AdminPage() {
             <h1>Admin</h1>
             <p>Gebiete verwalten</p>
           </div>
-          <label>Admin-Passwort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" disabled={loading} /></label>
+          <label>Admin-Passwort<input value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" disabled={loading} /></label>
           <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Öffnen</button>
           <p className="error">{error}</p>
         </form>
@@ -906,9 +926,9 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
     <div className="overlay">
       <form className="modal small" noValidate onSubmit={(e) => { e.preventDefault(); requestSave(); }}>
         <header><h2>Account-Daten ändern</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label>Revierpasswort<input type="password" value={passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
-        <label>Gast-Passwort<input type="password" value={viewerPasswort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
+        <label>Reviername<input value={name} maxLength={INPUT_LIMITS.revier} onChange={(e) => setName(e.target.value)} /></label>
+        <label>Revierpasswort<input type="password" value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
+        <label>Gast-Passwort<input type="password" value={viewerPasswort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
         {error ? <p className="error">{error}</p> : null}
         <button type="submit" className={`primary ${saving ? "is-loading" : ""}`} disabled={saving}>Speichern</button>
         <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => setDeleteConfirm(true)}>Löschung anfragen</button>
@@ -1008,13 +1028,13 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
     <main className="map-shell" data-layer={mapLayer}>
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} maxBounds={WORLD_BOUNDS} maxBoundsViscosity={1} className="map">
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
         {mapLayer === "osm" ? (
-          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} noWrap bounds={WORLD_BOUNDS} />
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} noWrap />
         ) : (
-          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} noWrap bounds={WORLD_BOUNDS} />
+          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={21} maxZoom={22} noWrap />
         )}
         <MapEvents data={data} openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
@@ -1391,7 +1411,7 @@ function MapTools({ setSelfPos }) {
         <div className="overlay" onClick={() => { setSearchOpen(false); setSearchQ(""); }}>
           <section className="modal small search-modal" onClick={(e) => e.stopPropagation()}>
             <header><h2>Ort suchen</h2><button type="button" onClick={() => setSearchOpen(false)}><X size={18} /></button></header>
-            <input autoFocus value={searchQ} onChange={(e) => { setSearchQ(e.target.value); doSearch(e.target.value); }} placeholder="Ort oder Adresse" />
+            <input autoFocus value={searchQ} maxLength={INPUT_LIMITS.search} onChange={(e) => { const q = e.target.value; setSearchQ(q); doSearch(q); }} placeholder="Ort oder Adresse" />
             <div className="search-results">
               {searchResults.map((r, i) => <button key={i} type="button" onClick={() => selectResult(r)}>{r.display_name}</button>)}
             </div>
@@ -1595,12 +1615,13 @@ function initialOriginLabel(item) {
   return "";
 }
 
-function ObjectForm({ data, form, originPick, setOriginPick, close, load, setConfirmAction }) {
+function ObjectForm({ data, form, originPick, setOriginPick, close, load, refresh, setConfirmAction }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [weatherLoading, setWeatherLoading] = useState("");
   const [imageLoading, setImageLoading] = useState(null);
   const [actionLoading, setActionLoading] = useState("");
+  const [itemStatus, setItemStatus] = useState(form.item?.status || "aktiv");
   const formId = useRef(form.id || localId()).current;
   const [movedPoint, setMovedPoint] = useState(null);
   const point = movedPoint || form.point;
@@ -1691,12 +1712,18 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
   }, [originPick, formId, setOriginPick]);
 
   const archiveItem = async () => {
-    if (!editing || !itemId || form.type === "aktivitaet") return;
+    if (form.type === "aktivitaet") return;
+    const nextStatus = itemStatus === "archiviert" ? "aktiv" : "archiviert";
+    if (!editing || !itemId) {
+      setItemStatus(nextStatus);
+      return;
+    }
     setActionLoading("archive");
     setError("");
     try {
-      await api(`${path}/${itemId}`, { method: "PATCH", body: { status: form.item.status === "archiviert" ? "aktiv" : "archiviert" } });
-      await load();
+      await api(`${path}/${itemId}`, { method: "PATCH", body: { status: nextStatus } });
+      setItemStatus(nextStatus);
+      await refresh();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1705,7 +1732,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
   };
 
   const deleteItem = async () => {
-    if (!editing || !itemId) return;
+    if (!editing || !itemId) {
+      close();
+      return;
+    }
     setActionLoading("delete");
     setError("");
     try {
@@ -1733,6 +1763,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
     setError("");
     try {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: point.lat, position_lng: point.lng };
+      if (form.type !== "aktivitaet") body.status = itemStatus;
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
@@ -1756,21 +1787,21 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
             {form.type === "kamera" ? (
               <>
                 <label>Typ<select required value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{MARKER_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
               </>
             ) : (
               <>
-                <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
+                <label>Name<input required value={values.name} maxLength={INPUT_LIMITS.itemName} onChange={(e) => set("name", e.target.value)} /></label>
                 <label>Typ<select value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{KANZEL_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
               </>
             )}
             <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         ) : form.type === "aktivitaet" ? (
           <>
-            <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Dauer (Stunden)<input type="number" min="0.01" max="720" step="0.01" inputMode="decimal" value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", e.target.value === "" ? "" : Number(e.target.value))} /></label>
+            <label>Name<input required value={values.name} maxLength={INPUT_LIMITS.itemName} onChange={(e) => set("name", e.target.value)} /></label>
+            <label>Dauer (Stunden)<input inputMode="decimal" maxLength={INPUT_LIMITS.decimal} value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", decimalInput(e.target.value))} /></label>
             <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
               <option value="">Keine</option>
               <option value="0">N</option>
@@ -1787,10 +1818,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
         ) : (
           <>
             <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((w) => <option key={w} value={w}>{w}</option>)}</select></label>
-            {values.wildart === "Sonstiges" ? <label><input value={values.wildart_sonstiges || ""} onChange={(e) => set("wildart_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+            {values.wildart === "Sonstiges" ? <label><input value={values.wildart_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("wildart_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
             <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
-            <label>Alter (Jahre)<input inputMode="decimal" value={values.alter_text} onChange={(e) => set("alter_text", e.target.value)} /></label>
-            <label>Gewicht (kg)<input inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
+            <label>Alter (Jahre)<input inputMode="decimal" maxLength={INPUT_LIMITS.age} value={values.alter_text} onChange={(e) => set("alter_text", decimalInput(e.target.value, INPUT_LIMITS.age))} /></label>
+            <label>Gewicht (kg)<input inputMode="decimal" maxLength={INPUT_LIMITS.decimal} value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", decimalInput(e.target.value))} /></label>
             <label>Zeitpunkt<span className="native-date-time date-time-split">
               <span className="date-time-pair">
                 <button type="button" className="date-time-trigger" onClick={() => {
@@ -1804,10 +1835,10 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
                 <input ref={timePickerRef} className="native-picker" type="time" onChange={(e) => set("uhrzeit", e.target.value)} />
               </span>
             </span></label>
-            <label>Schütze<input list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
+            <label>Schütze<input list="schuetzen" maxLength={INPUT_LIMITS.person} value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
-            <label>Wetter<span className="field-with-button"><input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
-            <label>Wind<span className="field-with-button"><input value={values.wind} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
+            <label>Wetter<span className="field-with-button"><input value={values.wetter} maxLength={INPUT_LIMITS.shortText} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
+            <label>Wind<span className="field-with-button"><input value={values.wind} maxLength={INPUT_LIMITS.shortText} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
             <label>Schussort<select value={selectedKanzelId} onChange={(e) => {
               const id = e.target.value;
               setSelectedKanzelId(id);
@@ -1837,9 +1868,11 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, setCon
         )}
         <p className="error">{error}</p>
         <div className="form-buttons">
-          <button className="quiet move-button" type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: point, origin: null })}>Verschieben</button>
-          {editing && form.type !== "aktivitaet" ? <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archiveItem}>{form.item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button> : null}
-          {editing ? <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: form.type === "aktivitaet" ? "Die Aktivität wird dauerhaft entfernt." : "Oft ist es besser, das Element zu archivieren.", action: deleteItem })}><Trash2 size={16} />Löschen</button> : null}
+          <div className="form-action-row">
+            <button className="quiet move-button" type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: point, origin: null })}>Verschieben</button>
+            {form.type !== "aktivitaet" ? <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`quiet ${actionLoading === "archive" ? "is-loading" : ""}`} onClick={archiveItem}>{itemStatus === "archiviert" ? "Aktivieren" : "Archivieren"}</button> : null}
+            <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => editing ? setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: form.type === "aktivitaet" ? "Die Aktivität wird dauerhaft entfernt." : "Oft ist es besser, das Element zu archivieren.", action: deleteItem }) : deleteItem()}><Trash2 size={16} />Löschen</button>
+          </div>
           <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || Boolean(actionLoading) || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
         </div>
       </form>
@@ -2144,7 +2177,7 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       <div className="list-shell">
         <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
       <div className="filters">
-        <label>Suchen<input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
+        <label>Suchen<input value={filters.q} maxLength={INPUT_LIMITS.search} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
         {tab === "abschuesse" ? <label>Von<input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-from", v); setFilters({ ...filters, from: v }); }} {...clearFrom} /></label> : null}
         {tab === "abschuesse" ? <label>Bis<input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-date-to", v); setFilters({ ...filters, to: v }); }} {...clearTo} /></label> : null}
