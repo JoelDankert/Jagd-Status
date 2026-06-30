@@ -89,6 +89,12 @@ function itemStatus(value) {
   return value === "archiviert" ? "archiviert" : "aktiv";
 }
 
+const MAX_NOTE = 3000;
+function truncNote(value) {
+  const v = clean(value);
+  return v ? v.slice(0, MAX_NOTE) : null;
+}
+
 function saveImage(base64data, prefix) {
   if (!base64data) return null;
   if (base64data.startsWith("data:")) {
@@ -644,8 +650,9 @@ function createHandler(table, extraFields = []) {
         if (f === "uhrzeit") return table === "abschuss" ? clean(req.body.uhrzeit) : null;
         if (f === "wildart" && table === "abschuss") return clean(req.body.wildart);
         if (f === "schuetz_name" && table === "abschuss") return clean(req.body.schuetz_name);
-        if (f === "kanzel_id" || f === "schuss_kanzel_id" || f === "typ" || f === "notiz")
+        if (f === "kanzel_id" || f === "schuss_kanzel_id" || f === "typ")
           return optional(req.body[f]);
+        if (f === "notiz") return truncNote(req.body[f]);
         if (IMAGE_FIELDS.includes(f)) return optional(req.body[f]);
         return clean(req.body[f]);
       });
@@ -685,8 +692,10 @@ function patchHandler(table, allowed) {
           values[key] = itemStatus(val);
         } else if (key === "alter_text") {
           values[key] = decimalText(val);
-        } else if (key.endsWith("_id") || key === "typ" || key === "notiz") {
+        } else if (key.endsWith("_id") || key === "typ") {
           values[key] = optional(val);
+        } else if (key === "notiz") {
+          values[key] = truncNote(val);
         } else {
           values[key] = clean(val);
         }

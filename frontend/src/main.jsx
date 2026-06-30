@@ -344,8 +344,8 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const hasDir = isActivity && item?.richtung_grad != null;
   const pulseKeyframes = isActivity
     ? (hasDir
-      ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}100%{opacity:0;transform:scale(${pulseScale})}}`
-      : `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}10%{opacity:1;transform:scale(.1)}50%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`)
+      ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}25%{opacity:1;transform:scale(.2)}50%{opacity:1;transform:scale(.4)}75%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`
+      : `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}25%{opacity:1;transform:scale(.2)}50%{opacity:0;transform:scale(.4)}75%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`)
     : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
   const dirStyle = isActivity && item?.richtung_grad != null ? `--activity-rotation:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
@@ -404,7 +404,11 @@ function useLongPressClear(clear) {
 
 function App() {
   const [data, setData] = useState(null);
-  const [theme, setTheme] = useState(() => localStorage.getItem("jagd-theme") || "light");
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("jagd-theme");
+    if (saved) return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const [loginError, setLoginError] = useState("");
   const [view, setView] = useState("map");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -433,8 +437,18 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("jagd-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      if (!localStorage.getItem("jagd-theme")) {
+        setTheme(mq.matches ? "dark" : "light");
+      }
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("jagd-layer", mapLayer);
@@ -831,10 +845,10 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
   }, [open]);
   return (
     <div className="header-menu">
-      <button type="button" className="quiet header-menu-btn" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="2"/><circle cx="9" cy="9" r="2"/><circle cx="14" cy="9" r="2"/></svg></button>
+      <button type="button" className="quiet header-menu-btn" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><span>...</span></button>
       {open ? createPortal((
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
-          <button type="button" onClick={() => { setOpen(false); setTheme(theme === "light" ? "dark" : "light"); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
+          <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; localStorage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
@@ -1200,9 +1214,11 @@ function MapEvents({ openCreate, originPick, setOriginPick }) {
 function MapTools({ setSelfPos }) {
   const map = useMap();
   const ref = useRef(null);
-  const lastSelfPos = useRef(null);
+  const lastLocation = useRef(null);
   const locationWatch = useRef(null);
   const centerOnNextLocation = useRef(false);
+  const centerRequestedAt = useRef(0);
+  const centerFallbackTimer = useRef(null);
   const [locating, setLocating] = useState(false);
   const [tracking, setTracking] = useState(false);
   const [error, setError] = useState("");
@@ -1229,10 +1245,71 @@ function MapTools({ setSelfPos }) {
     setSearchOpen(false);
     setSearchQ("");
   };
-  useEffect(() => () => {
+  const clearLocationWatch = () => {
     if (locationWatch.current !== null) navigator.geolocation.clearWatch(locationWatch.current);
+    locationWatch.current = null;
+  };
+  useEffect(() => () => {
+    clearLocationWatch();
+    clearTimeout(centerFallbackTimer.current);
   }, []);
 
+  const gpsPoint = (p) => ({
+    position: [p.coords.latitude, p.coords.longitude],
+    accuracy: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : 9999,
+    timestamp: p.timestamp || Date.now(),
+  });
+  const distanceMeters = (a, b) => {
+    const rad = Math.PI / 180;
+    const lat1 = a[0] * rad;
+    const lat2 = b[0] * rad;
+    const dLat = (b[0] - a[0]) * rad;
+    const dLng = (b[1] - a[1]) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  };
+  const shouldUseLocation = (next, current) => {
+    if (!current) return next.accuracy <= 5000;
+    const age = next.timestamp - current.timestamp;
+    if (next.accuracy <= current.accuracy * 1.15) return true;
+    const moved = distanceMeters(current.position, next.position);
+    if (moved > Math.max(8, Math.min(current.accuracy, next.accuracy) * 0.6)) return true;
+    if (age > 8000 && next.accuracy <= current.accuracy * 2) return true;
+    return age > 30000;
+  };
+  const centerIfRequested = (point, force = false) => {
+    if (!centerOnNextLocation.current) return;
+    const waited = Date.now() - centerRequestedAt.current;
+    if (!force && point.accuracy > 80 && waited < 2500) return;
+    centerOnNextLocation.current = false;
+    clearTimeout(centerFallbackTimer.current);
+    map.flyTo(point.position, Math.max(map.getZoom(), 16));
+  };
+  const acceptLocation = (p) => {
+    const next = gpsPoint(p);
+    if (!shouldUseLocation(next, lastLocation.current)) return;
+    lastLocation.current = next;
+    setSelfPos(next.position);
+    setTracking(true);
+    setLocating(false);
+    setError("");
+    centerIfRequested(next);
+  };
+  const handleLocationError = (err) => {
+    const blocked = !window.isSecureContext || /secure|https|http/i.test(err.message || "");
+    if (err.code === 1 || !lastLocation.current) {
+      setError(blocked ? "Position nur über HTTPS" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
+    }
+    if (err.code === 1) {
+      clearLocationWatch();
+      setTracking(false);
+      setLocating(false);
+      centerOnNextLocation.current = false;
+      clearTimeout(centerFallbackTimer.current);
+    } else if (!lastLocation.current) {
+      setLocating(false);
+    }
+  };
   const startLocationWatch = () => {
     if (!navigator.geolocation) {
       setError("Position nicht verfügbar");
@@ -1240,39 +1317,37 @@ function MapTools({ setSelfPos }) {
     }
     if (locationWatch.current !== null) return;
     locationWatch.current = navigator.geolocation.watchPosition(
-      (p) => {
-        const next = [p.coords.latitude, p.coords.longitude];
-        lastSelfPos.current = next;
-        setSelfPos(next);
-        setTracking(true);
-        setLocating(false);
-        setError("");
-        if (centerOnNextLocation.current) {
-          centerOnNextLocation.current = false;
-          map.flyTo(next, Math.max(map.getZoom(), 16));
-        }
-      },
-      (err) => {
-        const blocked = !window.isSecureContext || /secure|https|http/i.test(err.message || "");
-        setError(blocked ? "Position nur über HTTPS" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
-        setTracking(false);
-        setLocating(false);
-        locationWatch.current = null;
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 2000 }
+      acceptLocation,
+      handleLocationError,
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  };
+  const requestFastLocation = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      acceptLocation,
+      () => {},
+      { enableHighAccuracy: false, timeout: 1800, maximumAge: 15000 }
     );
   };
 
   const locate = () => {
     setError("");
-    const current = lastSelfPos.current;
+    const current = lastLocation.current;
     if (current) {
-      map.flyTo(current, Math.max(map.getZoom(), 16));
+      map.flyTo(current.position, Math.max(map.getZoom(), 16));
       startLocationWatch();
+      requestFastLocation();
       return;
     }
     centerOnNextLocation.current = true;
+    centerRequestedAt.current = Date.now();
+    clearTimeout(centerFallbackTimer.current);
+    centerFallbackTimer.current = setTimeout(() => {
+      if (centerOnNextLocation.current && lastLocation.current) centerIfRequested(lastLocation.current, true);
+    }, 3000);
     setLocating(true);
+    requestFastLocation();
     startLocationWatch();
   };
   return (
@@ -1282,14 +1357,12 @@ function MapTools({ setSelfPos }) {
       {error ? <button type="button" className="map-status error-status" onClick={() => setError("")}>{error}</button> : null}
       {searchOpen ? createPortal(
         <div className="overlay" onClick={() => { setSearchOpen(false); setSearchQ(""); }}>
-          <section className="modal small" onClick={(e) => e.stopPropagation()}>
-            <header><h2>Ort suchen</h2><button type="button" onClick={() => { setSearchOpen(false); setSearchQ(""); }}><X size={18} /></button></header>
-            <input autoFocus placeholder="Ortschaft..." value={searchQ} onChange={(e) => { setSearchQ(e.target.value); doSearch(e.target.value); }} />
-            {searchResults.length ? (
-              <div className="search-results">
-                {searchResults.map((r, i) => <button key={i} type="button" onClick={() => selectResult(r)}>{r.display_name}</button>)}
-              </div>
-            ) : null}
+          <section className="modal small search-modal" onClick={(e) => e.stopPropagation()}>
+            <header><h2>Ort suchen</h2><button type="button" onClick={() => setSearchOpen(false)}><X size={18} /></button></header>
+            <input autoFocus value={searchQ} onChange={(e) => { setSearchQ(e.target.value); doSearch(e.target.value); }} placeholder="Ort oder Adresse" />
+            <div className="search-results">
+              {searchResults.map((r, i) => <button key={i} type="button" onClick={() => selectResult(r)}>{r.display_name}</button>)}
+            </div>
             {searching ? <span className="mini-loader" /> : null}
           </section>
         </div>,
@@ -1693,23 +1766,25 @@ function NoteField({ value, onChange }) {
   const [fullscreen, setFullscreen] = useState(false);
   const isMobile = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
   const [localValue, setLocalValue] = useState("");
+  const maxLength = 3000;
   const openFullscreen = () => {
     if (!isMobile) return;
     setLocalValue(value);
     setFullscreen(true);
   };
   const closeFullscreen = () => {
-    onChange(localValue);
+    onChange(localValue.slice(0, maxLength));
     setFullscreen(false);
   };
   return (
     <>
-      <label>Bemerkungen<textarea value={value} onChange={(e) => onChange(e.target.value)} onFocus={openFullscreen} /></label>
+      <label>Bemerkungen<textarea value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} onFocus={openFullscreen} /><span className="note-counter">{value.length}/{maxLength}</span></label>
       {fullscreen ? createPortal(
         <div className="overlay" onClick={closeFullscreen}>
           <div className="modal small" onClick={(e) => e.stopPropagation()}>
             <header><h2>Bemerkungen</h2><button type="button" onClick={closeFullscreen}><X size={18} /></button></header>
-            <textarea autoFocus value={localValue} onChange={(e) => setLocalValue(e.target.value)} style={{ minHeight: "30vh" }} />
+            <textarea autoFocus maxLength={maxLength} value={localValue} onChange={(e) => setLocalValue(e.target.value)} style={{ minHeight: "30vh" }} />
+            <span className="note-counter">{localValue.length}/{maxLength}</span>
           </div>
         </div>,
         document.body
