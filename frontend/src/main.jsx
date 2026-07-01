@@ -370,7 +370,7 @@ const markerIcon = (type, item = null, archived = false, pulse = null) => {
     ? (hasDir
       ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}25%{opacity:1;transform:scale(.2)}50%{opacity:1;transform:scale(.4)}75%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`
       : `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}25%{opacity:1;transform:scale(.2)}50%{opacity:0;transform:scale(.4)}75%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`)
-    : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(.75)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
+    : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(1.3)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
   const dirStyle = isActivity && item?.richtung_grad != null ? `--activity-rotation:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
   const pulseIcons = pulse ? Array.from({ length: pulseCount }, (_, index) => {
