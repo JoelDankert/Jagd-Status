@@ -563,7 +563,12 @@ app.post("/api/login", async (req, res) => {
 
     const token = crypto.randomBytes(32).toString("base64url");
     sessions.set(token, { revierId: revier.id, role });
-    res.cookie("jagd_session", token, { httpOnly: true, sameSite: "lax", maxAge: 30 * 24 * 60 * 60 * 1000 });
+    res.cookie("jagd_session", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: req.secure,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
     res.json({ ok: true, role });
   } catch (error) {
     fail(res, error);
@@ -572,7 +577,7 @@ app.post("/api/login", async (req, res) => {
 
 app.post("/api/logout", (req, res) => {
   if (req.cookies.jagd_session) sessions.delete(req.cookies.jagd_session);
-  res.clearCookie("jagd_session");
+  res.clearCookie("jagd_session", { httpOnly: true, sameSite: "lax", secure: req.secure });
   res.json({ ok: true });
 });
 

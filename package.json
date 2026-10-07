@@ -6,7 +6,8 @@
   "scripts": {
     "build": "vite build frontend --outDir dist",
     "dev": "vite frontend --host 0.0.0.0",
-    "start": "node backend/server.js"
+    "start": "node backend/server.js",
+    "test": "python3 -m unittest discover -s scripts -p 'test_*.py'"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

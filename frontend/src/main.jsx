@@ -9,6 +9,10 @@ import "./styles.css";
 
 let LAST_ZOOM = null;
 
+// Frühere Versionen speicherten hier Reviername und Klartext-Passwort.
+// Der Server-Session-Cookie genügt für Reloads; Altbestände werden entfernt.
+localStorage.removeItem("jagd-credentials");
+
 const api = async (path, options = {}) => {
   const doFetch = async () => {
     const res = await fetch(path, {
@@ -23,15 +27,7 @@ const api = async (path, options = {}) => {
     if (!res.ok) { const error = new Error(json.error || "Fehler"); error.status = res.status; error.code = json.code; throw error; }
     return json;
   };
-  try { return await doFetch(); } catch (err) {
-    if (err.status === 401 && path !== "/api/login") {
-      const saved = (() => { try { return JSON.parse(localStorage.getItem("jagd-credentials")); } catch { return null; } })();
-      if (saved?.name && saved?.passwort) {
-        try { await fetch("/api/login", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: saved.name, passwort: saved.passwort }) }); return await doFetch(); } catch {}
-      }
-    }
-    throw err;
-  }
+  return doFetch();
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -479,10 +475,8 @@ function App() {
     try {
       await api("/api/login", { method: "POST", body });
       setLoginError("");
-      localStorage.setItem("jagd-credentials", JSON.stringify(body));
       await load();
     } catch (error) {
-      localStorage.removeItem("jagd-credentials");
       setLoginError(error.message);
       throw error;
     }
@@ -504,7 +498,7 @@ function App() {
           <button className={view === "map" ? "active" : ""} onClick={() => showView("map")}><MapIcon size={17} />Karte</button>
           <button className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
         </nav>
-        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); localStorage.removeItem("jagd-credentials"); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
+        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
       </header>
 
       {view === "map" ? (
@@ -545,7 +539,6 @@ function Login({ error, onLogin, onRequestRegistration }) {
   const [passwort, setPasswort] = useState("");
   const [loading, setLoading] = useState(true);
   const [registrationConfirm, setRegistrationConfirm] = useState(false);
-  const tried = useRef(false);
   const requestRegistration = async () => {
     setRegistrationConfirm(false);
     setLoading(true);
@@ -568,19 +561,7 @@ function Login({ error, onLogin, onRequestRegistration }) {
       setLoading(false);
     }
   };
-  useEffect(() => {
-    if (tried.current) return;
-    tried.current = true;
-    const saved = (() => { try { return JSON.parse(localStorage.getItem("jagd-credentials")); } catch { return null; } })();
-    if (saved?.name && saved?.passwort) {
-      setName(saved.name);
-      setPasswort(saved.passwort);
-      onLogin({ name: saved.name, passwort: saved.passwort })
-        .catch(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
-  }, []);
+  useEffect(() => setLoading(false), []);
   return (
     <main className="login">
       <form onSubmit={submit}>
@@ -593,6 +574,7 @@ function Login({ error, onLogin, onRequestRegistration }) {
         <label>Revierpasswort<input value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" disabled={loading} /></label>
         <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Anmelden</button>
         <p className="error">{error}</p>
+        <a className="legal-link" href="/rechtliches">Rechtliches</a>
       </form>
       {registrationConfirm ? (
         <ConfirmDialog
@@ -817,6 +799,7 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
           <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; localStorage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
+          <button type="button" onClick={() => { window.location.href = "/rechtliches"; }}>Rechtliches</button>
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
       ), document.body) : null}
@@ -2121,7 +2104,34 @@ function rowMeta(tab, item, data) {
 
 function Root() {
   if (window.location.pathname === "/admin") return <AdminPage />;
+  if (window.location.pathname === "/rechtliches") return <LegalPage />;
   return <App />;
+}
+
+function LegalPage() {
+  return (
+    <main className="legal-screen">
+      <article className="legal-card">
+        <h1>Rechtliches</h1>
+
+        <h2>Betreiber und Kontakt</h2>
+        <p>Joel Dankert<br /><a href="mailto:joel.dankert@gmail.com">joel.dankert@gmail.com</a></p>
+
+        <h2>Verarbeitete Daten</h2>
+        <p>Die Anwendung speichert Revier-, Kanzel-, Markierungs- und Abschussdaten auf dem Server in einer SQLite-Datenbank sowie hochgeladene Bilder im lokalen Bildverzeichnis des Servers. Zugangspasswörter werden serverseitig als Hash gespeichert.</p>
+        <p>Für die Anmeldung wird ein HTTP-only Session-Cookie gesetzt. Im Browser speichert die Anwendung ausschließlich Bedien- und Anzeigeeinstellungen in <code>localStorage</code>, zum Beispiel Theme, Kartenebene und Datumsfilter. Revierpasswörter werden dort nicht gespeichert.</p>
+
+        <h2>Externe Dienste</h2>
+        <p>Beim Anzeigen und Benutzen der Karte kann der Browser Kartendaten von Esri und OpenStreetMap laden. Die Ortssuche nutzt Nominatim (OpenStreetMap). Wetterdaten werden nur bei Nutzung der Wetterfunktion von Open-Meteo abgerufen. Dabei können insbesondere IP-Adresse, Zeitpunkt sowie Karten-, Orts- oder Koordinatenanfragen an den jeweiligen Dienst übermittelt werden.</p>
+        <p>Die Browser-Geolokalisierung wird nur nach Freigabe durch den Browser verwendet, um den eigenen Standort in der Karte anzuzeigen.</p>
+
+        <h2>Kontakt zu Datenschutzfragen</h2>
+        <p>Fragen zu gespeicherten Daten oder deren Berichtigung und Löschung bitte an <a href="mailto:joel.dankert@gmail.com">joel.dankert@gmail.com</a> richten.</p>
+
+        <a className="legal-back" href="/">Zurück zur Anwendung</a>
+      </article>
+    </main>
+  );
 }
 
 createRoot(document.getElementById("root")).render(<Root />);
