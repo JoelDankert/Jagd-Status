@@ -1,38 +1,91 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
-import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Pane, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import { Layers, List, LocateFixed, Map as MapIcon, Settings, Trash2, X } from "lucide-react";
+import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
-let LAST_ZOOM = 14;
+let LAST_ZOOM = null;
 
 const api = async (path, options = {}) => {
-  const res = await fetch(path, {
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const text = await res.text();
-  let json;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`);
+  const doFetch = async () => {
+    const res = await fetch(path, {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      ...options,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const text = await res.text();
+    let json;
+    try { json = text ? JSON.parse(text) : {}; } catch { throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`); }
+    if (!res.ok) { const error = new Error(json.error || "Fehler"); error.status = res.status; error.code = json.code; throw error; }
+    return json;
+  };
+  try { return await doFetch(); } catch (err) {
+    if (err.status === 401 && path !== "/api/login") {
+      const saved = (() => { try { return JSON.parse(localStorage.getItem("jagd-credentials")); } catch { return null; } })();
+      if (saved?.name && saved?.passwort) {
+        try { await fetch("/api/login", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: saved.name, passwort: saved.passwort }) }); return await doFetch(); } catch {}
+      }
+    }
+    throw err;
   }
-  if (!res.ok) throw new Error(json.error || "Fehler");
-  return json;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-const DURCHHAUSEN_CENTER = [48.0392, 8.6747];
+const INPUT_LIMITS = {
+  revier: 80,
+  passwort: 128,
+  itemName: 60,
+  custom: 40,
+  person: 80,
+  shortText: 120,
+  search: 180,
+  decimal: 10,
+  age: 10,
+};
+
+function decimalInput(value, max = INPUT_LIMITS.decimal) {
+  let text = String(value ?? "").replace(/[^0-9,.]/g, "");
+  const firstSeparator = text.search(/[,.]/);
+  if (firstSeparator !== -1) {
+    text = text.slice(0, firstSeparator + 1) + text.slice(firstSeparator + 1).replace(/[,.]/g, "");
+  }
+  return text.slice(0, max);
+}
+
+const DEFAULT_MAP_CENTER = [51.1657, 10.4515];
+const DEFAULT_MAP_ZOOM = 6;
+const MARKER_MAP_ZOOM = 14;
 const IMAGE_MAX_ZOOM = 8;
 const MAX_PULSE_BPM = 150;
 const MIN_PULSE_BPM = 20;
+const MAP_PANES = {
+  lines: "jagd-lines",
+  kanzeln: "jagd-kanzeln",
+  kameras: "jagd-kameras",
+  abschuesse: "jagd-abschuesse",
+  pick: "jagd-pick",
+  self: "jagd-self",
+};
+const MAP_PANE_STYLES = {
+  [MAP_PANES.lines]: { zIndex: 610, overflow: "visible" },
+  [MAP_PANES.kanzeln]: { zIndex: 640, overflow: "visible" },
+  [MAP_PANES.kameras]: { zIndex: 620, overflow: "visible" },
+  [MAP_PANES.abschuesse]: { zIndex: 630, overflow: "visible" },
+  [MAP_PANES.pick]: { zIndex: 700, overflow: "visible" },
+  [MAP_PANES.self]: { zIndex: 710, overflow: "visible" },
+};
+
+function dateTimeLocal(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("de", { dateStyle: "short", timeStyle: "short" });
+}
 
 function currentTime() {
   const date = new Date();
@@ -85,6 +138,20 @@ const WILDART_KLASSEN = {
   Sonstiges: "wild-sonstiges",
 };
 
+const MARKER_TYPEN = ["Wildkamera", "Kirrung", "Salzlecke", "Futterstelle", "Wasserstelle", "Suhle", "Sonstiges"];
+
+const KANZEL_TYPEN = ["Hochsitz", "Geschlossene Kanzel", "Offene Kanzel", "Ansitzleiter", "Ansitzzelt", "Drückjagdstand", "Schlafkanzel", "Fahrbare Kanzel", "Bodensitz", "Sonstiges"];
+
+const MARKER_FARBE = {
+  Wildkamera: "#2e7d32",
+  Kirrung: "#ad6a18",
+  Salzlecke: "#8c8c8c",
+  Futterstelle: "#9e7d27",
+  Wasserstelle: "#1a6d8a",
+  Suhle: "#5d4037",
+  Sonstiges: "#c2185b",
+};
+
 const WETTER_CODES = {
   0: "klar",
   1: "überwiegend klar",
@@ -127,6 +194,9 @@ function imageSrc(value) {
 function readImage(file) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve("");
+    if (file.type === "image/heic" || file.type === "image/heif" || file.type === "image/heif-sequence") {
+      return reject(new Error("HEIC/HEIF nicht unterstützt – bitte als JPEG aufnehmen"));
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const image = new Image();
@@ -137,14 +207,14 @@ function readImage(file) {
         canvas.width = Math.max(1, Math.round(image.width * scale));
         canvas.height = Math.max(1, Math.round(image.height * scale));
         const context = canvas.getContext("2d");
-        if (!context) return resolve(String(reader.result || ""));
+        if (!context) return reject(new Error("Canvas nicht verfügbar"));
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL("image/jpeg", 0.82));
       };
-      image.onerror = () => resolve(String(reader.result || ""));
+      image.onerror = () => reject(new Error("Bild konnte nicht geladen werden"));
       image.src = String(reader.result || "");
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error("Datei konnte nicht gelesen werden"));
     reader.readAsDataURL(file);
   });
 }
@@ -196,15 +266,25 @@ function geschlechtValue(value) {
   return value || "";
 }
 
-function markerLetter(value, fallback) {
+function markerLetter(value, fallback, limit = 2) {
   const letters = String(value || "")
     .trim()
     .split(" ")
     .map((part) => part.match(/[\p{L}\p{N}]/u)?.[0])
     .filter(Boolean)
-    .slice(0, 2)
+    .slice(0, limit)
     .join("");
   return letters || fallback;
+}
+
+function markerInitial(value, fallback) {
+  return String(value || "").trim().match(/[\p{L}\p{N}]/u)?.[0]?.toLocaleUpperCase("de") || fallback;
+}
+
+function customWildartValue(value) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  return text.charAt(0).toLocaleUpperCase("de") + text.slice(1).toLocaleLowerCase("de");
 }
 
 function shotPulseTiming(item) {
@@ -230,20 +310,28 @@ function shotPulseTiming(item) {
 const markerIcon = (type, item = null, archived = false, pulse = null) => {
   const kameraSize = archived ? 9 : 12;
   const otherSize = archived ? 18 : 25;
-  const size = type === "kamera" ? kameraSize : otherSize;
+  const shotSize = archived ? 14 : 18;
+  const size = type === "kamera" ? kameraSize : type === "abschuss" ? shotSize : otherSize;
   const pulseName = pulse ? `shot-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
   const pulseCount = 8;
   const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
+  const pulseScale = "3.5";
   const pulseEnd = pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
-  const pulsePeak = pulse ? Math.min(6, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
-  const pulseStyle = pulse ? `<style>@keyframes ${pulseName}{0%{opacity:0;transform:scale(.9)}${pulsePeak}%{opacity:.96;transform:scale(.92)}${pulseEnd}%{opacity:0;transform:scale(2.05)}100%{opacity:0;transform:scale(2.05)}}</style>` : "";
-  const pulseHtml = pulse ? `${pulseStyle}${Array.from({ length: pulseCount }, (_, index) => {
+  const pulsePeak = pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
+  const pulseKeyframes = pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(1.3)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
+  const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
+  const pulseIcons = pulse ? Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
-    return `<i class="pin-pulse" style="animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms"></i>`;
-  }).join("")}` : "";
+    const animStyle = `opacity:0;animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms`;
+    return `<i class="pin-pulse" style="${animStyle}"></i>`;
+  }).join("") : "";
+  const pulseHtml = pulse ? `${pulseStyle}${pulseIcons}` : "";
+  const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
+  const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
+  const genderClass = type === "abschuss" && item?.geschlecht && item.geschlecht !== "offen" ? ` geschlecht-${item.geschlecht.replace("ä","ae").replace("ö","oe").replace("ü","ue")}` : "";
   return L.divIcon({
-    className: `pin ${type} ${type === "abschuss" ? WILDART_KLASSEN[item?.wildart] || "wild-sonstiges" : ""} ${archived ? "is-archived" : ""}`,
-    html: `${pulseHtml}<span>${type === "kanzel" ? markerLetter(item?.name, "K") : type === "kamera" ? "" : markerLetter(item?.wildart, "A")}</span>`,
+    className: `pin ${type} ${type === "abschuss" ? (WILDART_KLASSEN[item?.wildart] || "wild-sonstiges") + genderClass : ""} ${archived ? "is-archived" : ""}`,
+    html: `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -282,19 +370,30 @@ function useLongPressClear(clear) {
 
 function App() {
   const [data, setData] = useState(null);
-  const [theme, setTheme] = useState(() => localStorage.getItem("jagd-theme") || "light");
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("jagd-theme");
+    if (saved) return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const [loginError, setLoginError] = useState("");
   const [view, setView] = useState("map");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [animateMove, setAnimateMove] = useState(true);
   const [createAt, setCreateAt] = useState(null);
   const [form, setForm] = useState(null);
   const [originPick, setOriginPick] = useState(null);
   const [selfPos, setSelfPos] = useState(null);
   const [listTab, setListTab] = useState("kanzeln");
-  const [filters, setFilters] = useState({ q: "", showArchived: false, from: "", to: "" });
+  const [filters, setFilters] = useState({
+    q: "",
+    showArchived: true,
+    from: localStorage.getItem("jagd-list-date-from") || "",
+    to: localStorage.getItem("jagd-list-date-to") || "",
+  });
   const [accountOpen, setAccountOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [mapLayer, setMapLayer] = useState(() => localStorage.getItem("jagd-layer") || "sat");
 
   const load = async () => setData(await api("/api/map-data"));
 
@@ -304,8 +403,22 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("jagd-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      if (!localStorage.getItem("jagd-theme")) {
+        setTheme(mq.matches ? "dark" : "light");
+      }
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("jagd-layer", mapLayer);
+  }, [mapLayer]);
 
   useEffect(() => {
     if (!data) return undefined;
@@ -338,6 +451,7 @@ function App() {
   };
 
   const openSelection = (next) => {
+    if (originPick) return;
     setSettingsOpen(false);
     setCreateAt(null);
     setForm(null);
@@ -365,9 +479,20 @@ function App() {
     try {
       await api("/api/login", { method: "POST", body });
       setLoginError("");
+      localStorage.setItem("jagd-credentials", JSON.stringify(body));
       await load();
     } catch (error) {
+      localStorage.removeItem("jagd-credentials");
       setLoginError(error.message);
+      throw error;
+    }
+  }} onRequestRegistration={async (body) => {
+    try {
+      await api("/api/revier-requests", { method: "POST", body });
+      setLoginError("Registrierung angefordert.");
+    } catch (error) {
+      setLoginError(error.message);
+      throw error;
     }
   }} />;
 
@@ -379,7 +504,7 @@ function App() {
           <button className={view === "map" ? "active" : ""} onClick={() => showView("map")}><MapIcon size={17} />Karte</button>
           <button className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
         </nav>
-        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
+        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); localStorage.removeItem("jagd-credentials"); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
       </header>
 
       {view === "map" ? (
@@ -394,36 +519,68 @@ function App() {
           setSelfPos={setSelfPos}
           openSettings={openSettings}
           isViewer={isViewer}
+          mapLayer={mapLayer}
+          setMapLayer={setMapLayer}
+          animateMove={animateMove}
+          setAnimateMove={setAnimateMove}
         />
       ) : (
-        <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} setConfirmAction={setConfirmAction} />
+        <ListScreen data={data} tab={listTab} setTab={setListTab} filters={filters} setFilters={setFilters} setView={setView} openSelection={openSelection} load={load} setConfirmAction={setConfirmAction} setAnimateMove={setAnimateMove} />
       )}
 
       {settingsOpen && !originPick && <SettingsPanel data={data} load={load} close={() => setSettingsOpen(false)} isViewer={isViewer} />}
       {activeSelected && !originPick && <DetailPanel data={data} selected={selected} item={activeSelected} close={() => setSelected(null)} load={load} openForm={isViewer ? () => {} : openForm} isViewer={isViewer} setConfirmAction={setConfirmAction} />}
       {createAt && !isViewer && <CreateWindow point={createAt} close={() => setCreateAt(null)} openForm={openForm} />}
-      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} />}
+      {form && !isViewer && <ObjectForm key={formKey(form)} data={data} form={form} originPick={originPick} setOriginPick={setOriginPick} close={() => { setForm(null); setOriginPick(null); }} load={async () => { await load(); setForm(null); setOriginPick(null); }} refresh={load} setConfirmAction={setConfirmAction} />}
 
       {accountOpen && <AccountPanel data={data} load={load} close={() => setAccountOpen(false)} setConfirmAction={setConfirmAction} />}
-      {confirmAction && <ConfirmDialog message={confirmAction.message} hint={confirmAction.hint} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
+      {confirmAction && <ConfirmDialog title={confirmAction.title} message={confirmAction.message} hint={confirmAction.hint} confirmLabel={confirmAction.confirmLabel} confirmClass={confirmAction.confirmClass} onConfirm={() => { confirmAction.action(); setConfirmAction(null); }} onCancel={() => setConfirmAction(null)} />}
 
     </div>
   );
 }
 
-function Login({ error, onLogin }) {
+function Login({ error, onLogin, onRequestRegistration }) {
   const [name, setName] = useState("");
   const [passwort, setPasswort] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [registrationConfirm, setRegistrationConfirm] = useState(false);
+  const tried = useRef(false);
+  const requestRegistration = async () => {
+    setRegistrationConfirm(false);
+    setLoading(true);
+    try {
+      await onRequestRegistration({ name, passwort });
+    } finally {
+      setLoading(false);
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
       await onLogin({ name, passwort });
+    } catch (error) {
+      if (error.status === 404 && name && passwort) {
+        setRegistrationConfirm(true);
+      }
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => {
+    if (tried.current) return;
+    tried.current = true;
+    const saved = (() => { try { return JSON.parse(localStorage.getItem("jagd-credentials")); } catch { return null; } })();
+    if (saved?.name && saved?.passwort) {
+      setName(saved.name);
+      setPasswort(saved.passwort);
+      onLogin({ name: saved.name, passwort: saved.passwort })
+        .catch(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, []);
   return (
     <main className="login">
       <form onSubmit={submit}>
@@ -432,11 +589,212 @@ function Login({ error, onLogin }) {
           <h1>{name || "Jagd"}</h1>
           <p>Revierverwaltung</p>
         </div>
-        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" disabled={loading} /></label>
-        <label>Revierpasswort<input value={passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" disabled={loading} /></label>
+        <label>Reviername<input value={name} maxLength={INPUT_LIMITS.revier} onChange={(e) => setName(e.target.value)} autoComplete="username" placeholder="Name des Reviers" disabled={loading} /></label>
+        <label>Revierpasswort<input value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" placeholder="Passwort" disabled={loading} /></label>
         <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Anmelden</button>
         <p className="error">{error}</p>
       </form>
+      {registrationConfirm ? (
+        <ConfirmDialog
+          title="Registrierung"
+          message="Account nicht vorhanden, Registrierung anfordern?"
+          confirmLabel="Anfordern"
+          onConfirm={requestRegistration}
+          onCancel={() => setRegistrationConfirm(false)}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function AdminPage() {
+  const [passwort, setPasswort] = useState("");
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [deleteRequestConfirm, setDeleteRequestConfirm] = useState(null);
+
+  const loadAdmin = async (adminPasswort = passwort) => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await api("/api/admin/data", { method: "POST", body: { passwort: adminPasswort } });
+      setData(next);
+      setPasswort(adminPasswort);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approve = async (requestId) => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/requests/${requestId}/approve`, { method: "POST", body: { passwort } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reject = async (requestId) => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/requests/${requestId}`, { method: "DELETE", body: { passwort } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteRevier = async () => {
+    if (!deleteConfirm) return;
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/reviere/${deleteConfirm.id}`, { method: "DELETE", body: { passwort } }));
+      setDeleteConfirm(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approveDeleteRequest = async () => {
+    if (!deleteRequestConfirm) return;
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/delete-requests/${deleteRequestConfirm.id}/approve`, { method: "POST", body: { passwort } }));
+      setDeleteRequestConfirm(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const rejectDeleteRequest = async (requestId) => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await api(`/api/admin/delete-requests/${requestId}`, { method: "DELETE", body: { passwort } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!data) {
+    return (
+      <main className="login">
+        <form onSubmit={(e) => { e.preventDefault(); loadAdmin(); }}>
+          <div className="login-head">
+            <span className="login-badge">A</span>
+            <h1>Admin</h1>
+            <p>Gebiete verwalten</p>
+          </div>
+          <label>Admin-Passwort<input value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => setPasswort(e.target.value)} type="password" autoComplete="current-password" disabled={loading} /></label>
+          <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Öffnen</button>
+          <p className="error">{error}</p>
+        </form>
+      </main>
+    );
+  }
+
+  return (
+    <main className="admin-screen">
+      <div className="admin-shell">
+        <header className="admin-top">
+          <div>
+            <h1>Admin</h1>
+            <p>Gebiete und Registrierungen</p>
+          </div>
+          <button type="button" className="quiet" onClick={() => loadAdmin()} disabled={loading}>Aktualisieren</button>
+        </header>
+        {error ? <p className="error">{error}</p> : null}
+
+        <section className="admin-section">
+          <h2>Neue Gebiete</h2>
+          <div className="admin-list">
+            {data.requests.length ? data.requests.map((request) => (
+              <article className="admin-card pending" key={request.id}>
+                <div>
+                  <strong>{request.name}</strong>
+                  <span>{dateTimeLocal(request.created_at)}</span>
+                </div>
+                <div className="admin-actions">
+                  <button type="button" className="primary" onClick={() => approve(request.id)} disabled={loading}>Annehmen</button>
+                  <button type="button" className="quiet" onClick={() => reject(request.id)} disabled={loading}>Ablehnen</button>
+                </div>
+              </article>
+            )) : <p className="empty">Keine offenen Registrierungen</p>}
+          </div>
+        </section>
+
+        <section className="admin-section">
+          <h2>Löschanfragen</h2>
+          <div className="admin-list">
+            {data.deleteRequests?.length ? data.deleteRequests.map((request) => (
+              <article className="admin-card pending" key={request.id}>
+                <div>
+                  <strong>{request.name}</strong>
+                  <span>{dateTimeLocal(request.created_at)}</span>
+                </div>
+                <div className="admin-actions">
+                  <button type="button" className="danger" onClick={() => setDeleteRequestConfirm(request)} disabled={loading}><Trash2 size={16} />Löschen</button>
+                  <button type="button" className="quiet" onClick={() => rejectDeleteRequest(request.id)} disabled={loading}>Ablehnen</button>
+                </div>
+              </article>
+            )) : <p className="empty">Keine offenen Löschanfragen</p>}
+          </div>
+        </section>
+
+        <section className="admin-section">
+          <h2>Alle Gebiete</h2>
+          <div className="admin-list">
+            {data.reviere.map((revier) => (
+              <article className="admin-card" key={revier.id}>
+                <div>
+                  <strong>{revier.name}</strong>
+                  <span>Erstellt {dateTimeLocal(revier.created_at)}</span>
+                </div>
+                <div className="admin-actions">
+                  <button type="button" className="danger" onClick={() => setDeleteConfirm(revier)} disabled={loading}><Trash2 size={16} />Löschen</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+      {deleteRequestConfirm ? (
+        <ConfirmDialog
+          title="Löschanfrage bestätigen"
+          message={deleteRequestConfirm.name + " wirklich löschen?"}
+          confirmLabel="Löschen"
+          confirmClass="danger"
+          onConfirm={approveDeleteRequest}
+          onCancel={() => setDeleteRequestConfirm(null)}
+        />
+      ) : null}
+      {deleteConfirm ? (
+        <ConfirmDialog
+          title="Gebiet löschen"
+          message={deleteConfirm.name + " wirklich löschen?"}
+          confirmLabel="Löschen"
+          confirmClass="danger"
+          onConfirm={deleteRevier}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -454,10 +812,10 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
   }, [open]);
   return (
     <div className="header-menu">
-      <button type="button" className="quiet" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>...</button>
+      <button type="button" className="quiet header-menu-btn" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><span>...</span></button>
       {open ? createPortal((
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
-          <button type="button" onClick={() => { setOpen(false); setTheme(theme === "light" ? "dark" : "light"); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
+          <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; localStorage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
@@ -472,6 +830,8 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
   const [viewerPasswort, setViewerPasswort] = useState(data.revier.has_viewer_passwort ? "••••••••" : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [deleteSaving, setDeleteSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const viewerTouched = useRef(false);
   const adminTouched = useRef(false);
   const submit = () => {
@@ -485,121 +845,267 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
       .catch((err) => setError(err.message))
       .finally(() => setSaving(false));
   };
+  const requestDelete = () => {
+    setDeleteSaving(true);
+    setError("");
+    api("/api/revier/delete-request", { method: "POST" })
+      .then(() => setError("Löschung angefragt."))
+      .catch((err) => setError(err.message))
+      .finally(() => setDeleteSaving(false));
+  };
+  const requestSave = () => {
+    if (!name.trim()) {
+      setError("Name fehlt");
+      return;
+    }
+    if (adminTouched.current && !passwort.trim()) {
+      setError("Passwort fehlt");
+      return;
+    }
+    setError("");
+    setConfirmAction({ message: "Account-Daten ändern?", action: submit });
+  };
   return (
     <div className="overlay">
-      <form className="modal small" onSubmit={(e) => { e.preventDefault(); setConfirmAction({ message: "Account-Daten ändern?", action: submit }); }}>
+      <form className="modal small" noValidate onSubmit={(e) => { e.preventDefault(); requestSave(); }}>
         <header><h2>Account-Daten ändern</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <label>Reviername<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label>Revierpasswort<input type="password" value={passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
-        <label>Gast-Passwort<input type="password" value={viewerPasswort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
+        <label>Reviername<input value={name} maxLength={INPUT_LIMITS.revier} onChange={(e) => setName(e.target.value)} /></label>
+        <label>Revierpasswort<input type="password" value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
+        <label>Gast-Passwort<input type="password" value={viewerPasswort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
         {error ? <p className="error">{error}</p> : null}
         <button type="submit" className={`primary ${saving ? "is-loading" : ""}`} disabled={saving}>Speichern</button>
+        <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => setDeleteConfirm(true)}><Trash2 size={16} />Löschung anfragen</button>
       </form>
+      {deleteConfirm ? (
+        <ConfirmDialog
+          title="Löschung anfragen"
+          message="Account-Löschung beim Admin anfragen?"
+          confirmLabel="Anfragen"
+          confirmClass="danger"
+          onConfirm={() => { setDeleteConfirm(false); requestDelete(); }}
+          onCancel={() => setDeleteConfirm(false)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function ConfirmDialog({ message, hint, onConfirm, onCancel }) {
-  return (
-    <div className="overlay">
-      <section className="modal small">
-        <header><h2>Bestätigen</h2></header>
-        <p className="confirm-text">{hint ? `${message} ${hint}` : message}</p>
-        <div className="confirm-actions">
-          <button type="button" onClick={onCancel}>Abbrechen</button>
-          <button type="button" className="primary" onClick={onConfirm}>Ja</button>
-        </div>
-      </section>
-    </div>
+function ConfirmDialog({ title = "Bestätigen", message, hint, confirmLabel = "Ja", confirmClass = "primary", onConfirm, onCancel }) {
+  const dialog = (
+    <dialog className="native-dialog modal small" open>
+      <header><h2>{title}</h2></header>
+      <p className="confirm-text">{hint ? `${message} ${hint}` : message}</p>
+      <div className="confirm-actions">
+        <button type="button" onClick={onCancel}>Abbrechen</button>
+        <button type="button" className={confirmClass} onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    </dialog>
   );
+  return createPortal(dialog, document.body);
 }
 
-function MapInit({ center }) {
+function MapInit({ center, defaultZoom, mapLayer }) {
   const map = useMap();
   const done = useRef(false);
   useEffect(() => {
     if (!done.current) {
       done.current = true;
-      map.setView(center, LAST_ZOOM, { animate: false });
+      map.setView(center, LAST_ZOOM ?? defaultZoom, { animate: false });
     }
     const onZoom = () => { LAST_ZOOM = map.getZoom(); };
     map.on("zoomend", onZoom);
     return () => map.off("zoomend", onZoom);
   }, []);
+  useEffect(() => {
+    if (!done.current) return;
+    const timer = setTimeout(() => {
+      const z = map.getZoom();
+      map.invalidateSize({ animate: false });
+      map.setZoom(z === map.options.maxZoom ? z - 1 : z + 1, { animate: false });
+      requestAnimationFrame(() => map.setZoom(z, { animate: false }));
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [mapLayer]);
   return null;
 }
 
-function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer }) {
+function MapInteractionVisibility() {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    let settleTimer = 0;
+    const showLess = () => {
+      clearTimeout(settleTimer);
+      container.classList.add("is-map-interacting");
+    };
+    const showAll = () => {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => container.classList.remove("is-map-interacting"), 80);
+    };
+    const pausePulses = () => container.classList.add("is-map-panning");
+    const resumePulses = () => container.classList.remove("is-map-panning");
+
+    map.on("zoomstart", showLess);
+    map.on("zoomend", showAll);
+    map.on("movestart", pausePulses);
+    map.on("moveend", resumePulses);
+    return () => {
+      clearTimeout(settleTimer);
+      container.classList.remove("is-map-interacting");
+      container.classList.remove("is-map-panning");
+      map.off("zoomstart", showLess);
+      map.off("zoomend", showAll);
+      map.off("movestart", pausePulses);
+      map.off("moveend", resumePulses);
+    };
+  }, [map]);
+  return null;
+}
+
+function MapScreen({ data, selected, openSelection, openCreate, originPick, setOriginPick, selfPos, setSelfPos, openSettings, isViewer, mapLayer, setMapLayer, animateMove, setAnimateMove }) {
   const visible = useVisibleData(data);
-  const center = markerCenter([...visible.kanzeln, ...visible.kameras, ...visible.abschuesse]);
+  const mapItems = [...visible.kanzeln, ...visible.kameras, ...visible.abschuesse];
+  const center = markerCenter(mapItems);
+  const defaultZoom = mapItems.length ? MARKER_MAP_ZOOM : DEFAULT_MAP_ZOOM;
+  const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
+  const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
-    <main className="map-shell">
-      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={22} className="map">
-        <MapInit center={center} />
-        <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={22} />
-        <MapEvents openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
+    <main className={`map-shell${data.settings.show_geschlecht === 0 ? " hide-gender" : ""}`} data-layer={mapLayer}>
+      <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className="map">
+        <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
+        <MapInteractionVisibility />
+        {mapLayer === "sat" ? (
+          <TileLayer key="sat" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={19} maxZoom={22} noWrap />
+        ) : (
+          <TileLayer key="osm" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={18} maxZoom={22} noWrap />
+        )}
+        <MapEvents data={data} openCreate={openCreate} originPick={originPick} setOriginPick={setOriginPick} />
         <MapTools setSelfPos={setSelfPos} />
-        <FlyToSelection data={data} selected={selected} />
-        {visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} />)}
-        {originPick ? <PickTarget originPick={originPick} /> : null}
-        {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel) => (
+        {Object.entries(MAP_PANE_STYLES).map(([name, style]) => <Pane key={name} name={name} style={style} />)}
+        <FlyToSelection data={data} selected={selected} animate={animateMove} />
+        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => <ShotLine key={`line-${abschuss.id}`} abschuss={abschuss} data={data} pane={MAP_PANES.lines} />) : null}
+        {originPick && originPick.mode !== "move" ? <PickTarget originPick={originPick} /> : null}
+        {Number(data.settings.show_kanzeln) ? visible.kanzeln.map((kanzel, i) => (
           <Marker
             key={kanzel.id}
+            pane={MAP_PANES.kanzeln}
             position={[kanzel.position_lat, kanzel.position_lng]}
             icon={markerIcon("kanzel", kanzel, kanzel.status === "archiviert")}
+            zIndexOffset={visible.kanzeln.length - i}
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-                if (originPick) setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
-                else openSelection({ type: "kanzel", id: kanzel.id });
+                if (originPick && originPick.mode !== "move") setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
+                else if (!originPick) flyToSelection({ type: "kanzel", id: kanzel.id });
               },
             }}
           />
         )) : null}
-        {Number(data.settings.show_kameras) ? visible.kameras.map((kamera) => (
+        {Number(data.settings.show_kameras) ? visible.kameras.map((kamera, i) => (
           <Marker
             key={kamera.id}
+            pane={MAP_PANES.kameras}
             position={[kamera.position_lat, kamera.position_lng]}
             icon={markerIcon("kamera", kamera, kamera.status === "archiviert")}
+            zIndexOffset={visible.kameras.length - i}
             eventHandlers={{
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-                openSelection({ type: "kamera", id: kamera.id });
+                flyToSelection({ type: "kamera", id: kamera.id });
               },
             }}
           />
         )) : null}
-        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss) => (
-          <Marker
-            key={abschuss.id}
-            position={[abschuss.position_lat, abschuss.position_lng]}
-            icon={markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss))}
-            eventHandlers={{ click: () => openSelection({ type: "abschuss", id: abschuss.id }) }}
-          />
+        {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss, i) => (
+          <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} pane={MAP_PANES.abschuesse} zIndexOffset={visible.abschuesse.length - i} />
         )) : null}
-        {originPick?.origin?.lat ? <Marker position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
-        {selfPos && Number(data.settings.show_self_location) ? <Marker position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
+        {originPick?.origin?.lat && originPick.mode !== "move" ? <Marker pane={MAP_PANES.pick} position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
+        {selfPos && Number(data.settings.show_self_location) ? <Marker pane={MAP_PANES.self} position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
-      <button className="map-settings icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
+      <div className="map-top-right">
+        <button className="icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
+        <button className="icon-button" type="button" onClick={toggleLayer} title={mapLayer === "osm" ? "Satellit" : "Karte"}><MapIcon size={18} /></button>
+      </div>
+      <div className="map-attribution">{mapLayer === "osm" ? '\u00a9 OpenStreetMap' : '\u00a9 Esri'}</div>
     </main>
   );
 }
 
-function MapEvents({ openCreate, originPick, setOriginPick }) {
+const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, setAnimateMove, pane, zIndexOffset }) {
+  const icon = useMemo(
+    () => markerIcon("abschuss", abschuss, abschuss.status === "archiviert", shotPulseTiming(abschuss)),
+    [
+      abschuss.id,
+      abschuss.status,
+      abschuss.wildart,
+      abschuss.datum,
+      abschuss.uhrzeit,
+      abschuss.created_at,
+      abschuss.updated_at,
+    ]
+  );
+  const eventHandlers = useMemo(() => ({
+    click: () => {
+      setAnimateMove(false);
+      openSelection({ type: "abschuss", id: abschuss.id });
+    },
+  }), [abschuss.id, openSelection, setAnimateMove]);
+
+  return (
+    <Marker
+      pane={pane}
+      position={[abschuss.position_lat, abschuss.position_lng]}
+      icon={icon}
+      zIndexOffset={zIndexOffset}
+      eventHandlers={eventHandlers}
+    />
+  );
+});
+
+function MapEvents({ data, openCreate, originPick, setOriginPick }) {
+  const map = useMap();
   const timer = useRef(null);
+  const originPickRef = useRef(originPick);
+  originPickRef.current = originPick;
+  const setOriginPickRef = useRef(setOriginPick);
+  setOriginPickRef.current = setOriginPick;
+  const snapKanzelMove = (next) => {
+    const pick = originPickRef.current;
+    if (pick?.mode !== "move" || pick?.type !== "kanzel") return next;
+    const current = pick.target;
+    if (!current) return next;
+    const tapPoint = map.latLngToLayerPoint(next);
+    const currentPoint = map.latLngToLayerPoint([current.lat, current.lng]);
+    const snapPx = 28;
+    const candidates = data.abschuesse
+      .map((abschuss) => shotOrigin(abschuss, data))
+      .filter((origin) => origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng))
+      .map((origin) => {
+        const originPoint = map.latLngToLayerPoint([origin.lat, origin.lng]);
+        return { origin, tapDistance: tapPoint.distanceTo(originPoint), currentDistance: currentPoint.distanceTo(originPoint) };
+      })
+      .filter((candidate) => candidate.tapDistance <= snapPx && candidate.currentDistance > snapPx)
+      .sort((a, b) => a.tapDistance - b.tapDistance);
+    return candidates[0]?.origin || next;
+  };
   const setOrigin = (next) => {
-    setOriginPick({ ...originPick, origin: { type: "point", lat: next.lat, lng: next.lng } });
+    const picked = snapKanzelMove(next);
+    setOriginPickRef.current({ ...originPickRef.current, origin: { type: "point", lat: picked.lat, lng: picked.lng } });
   };
   useMapEvents({
+    dblclick(e) {
+      if (originPickRef.current) setOrigin(e.latlng);
+      else openCreate(e.latlng);
+    },
     contextmenu(e) {
-      if (originPick) setOrigin(e.latlng);
+      if (originPickRef.current) setOrigin(e.latlng);
       else openCreate(e.latlng);
     },
     click(e) {
-      if (originPick) setOrigin(e.latlng);
+      if (originPickRef.current) setOrigin(e.latlng);
     },
     mousedown(e) {
-      if (originPick) return;
+      if (originPickRef.current) return;
       timer.current = setTimeout(() => openCreate(e.latlng), 700);
     },
     mouseup() {
@@ -618,56 +1124,169 @@ function MapEvents({ openCreate, originPick, setOriginPick }) {
 function MapTools({ setSelfPos }) {
   const map = useMap();
   const ref = useRef(null);
+  const lastLocation = useRef(null);
+  const locationWatch = useRef(null);
+  const centerOnNextLocation = useRef(false);
+  const centerRequestedAt = useRef(0);
+  const centerFallbackTimer = useRef(null);
   const [locating, setLocating] = useState(false);
+  const [tracking, setTracking] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => {
-    if (!ref.current) return;
-    L.DomEvent.disableClickPropagation(ref.current);
-    L.DomEvent.disableScrollPropagation(ref.current);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef(null);
+  const doSearch = (q) => {
+    if (!q.trim()) { setSearchResults([]); return; }
+    setSearching(true);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&accept-language=de`);
+        if (r.ok) setSearchResults(await r.json());
+        else setSearchResults([]);
+      } catch { setSearchResults([]); }
+      setSearching(false);
+    }, 350);
+  };
+  const selectResult = (item) => {
+    map.flyTo([Number(item.lat), Number(item.lon)], Math.max(map.getZoom(), 14));
+    setSearchOpen(false);
+    setSearchQ("");
+  };
+  const clearLocationWatch = () => {
+    if (locationWatch.current !== null) navigator.geolocation.clearWatch(locationWatch.current);
+    locationWatch.current = null;
+  };
+  useEffect(() => () => {
+    clearLocationWatch();
+    clearTimeout(centerFallbackTimer.current);
   }, []);
-  useEffect(() => {
-    if (!error) return undefined;
-    const timer = setTimeout(() => setError(""), 4500);
-    return () => clearTimeout(timer);
-  }, [error]);
-  const locate = () => {
+
+  const gpsPoint = (p) => ({
+    position: [p.coords.latitude, p.coords.longitude],
+    accuracy: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : 9999,
+    timestamp: p.timestamp || Date.now(),
+  });
+  const distanceMeters = (a, b) => {
+    const rad = Math.PI / 180;
+    const lat1 = a[0] * rad;
+    const lat2 = b[0] * rad;
+    const dLat = (b[0] - a[0]) * rad;
+    const dLng = (b[1] - a[1]) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  };
+  const shouldUseLocation = (next, current) => {
+    if (!current) return next.accuracy <= 5000;
+    const age = next.timestamp - current.timestamp;
+    if (next.accuracy <= current.accuracy * 1.15) return true;
+    const moved = distanceMeters(current.position, next.position);
+    if (moved > Math.max(8, Math.min(current.accuracy, next.accuracy) * 0.6)) return true;
+    if (age > 8000 && next.accuracy <= current.accuracy * 2) return true;
+    return age > 30000;
+  };
+  const centerIfRequested = (point, force = false) => {
+    if (!centerOnNextLocation.current) return;
+    const waited = Date.now() - centerRequestedAt.current;
+    if (!force && point.accuracy > 80 && waited < 2500) return;
+    centerOnNextLocation.current = false;
+    clearTimeout(centerFallbackTimer.current);
+    map.flyTo(point.position, Math.max(map.getZoom(), 16));
+  };
+  const acceptLocation = (p) => {
+    const next = gpsPoint(p);
+    if (!shouldUseLocation(next, lastLocation.current)) return;
+    lastLocation.current = next;
+    setSelfPos(next.position);
+    setTracking(true);
+    setLocating(false);
     setError("");
+    centerIfRequested(next);
+  };
+  const handleLocationError = (err) => {
+    const blocked = !window.isSecureContext || /secure|https|http/i.test(err.message || "");
+    if (err.code === 1 || !lastLocation.current) {
+      setError(blocked ? "Position nur über HTTPS" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
+    }
+    if (err.code === 1) {
+      clearLocationWatch();
+      setTracking(false);
+      setLocating(false);
+      centerOnNextLocation.current = false;
+      clearTimeout(centerFallbackTimer.current);
+    } else if (!lastLocation.current) {
+      setLocating(false);
+    }
+  };
+  const startLocationWatch = () => {
     if (!navigator.geolocation) {
       setError("Position nicht verfügbar");
       return;
     }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        const next = [p.coords.latitude, p.coords.longitude];
-        setSelfPos(next);
-        map.flyTo(next, Math.max(map.getZoom(), 16));
-        setLocating(false);
-      },
-      (err) => {
-        const secureError = /secure|https|http/i.test(err.message || "");
-        setError(secureError ? "Browser blockiert Position über HTTP" : err.code === 1 ? "Erlaubnis fehlt" : "Position nicht gefunden");
-        setLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
+    if (locationWatch.current !== null) return;
+    locationWatch.current = navigator.geolocation.watchPosition(
+      acceptLocation,
+      handleLocationError,
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 300 }
     );
+  };
+  const requestFastLocation = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      acceptLocation,
+      () => {},
+      { enableHighAccuracy: false, timeout: 1800, maximumAge: 15000 }
+    );
+  };
+
+  const locate = () => {
+    setError("");
+    const current = lastLocation.current;
+    if (current) {
+      map.flyTo(current.position, Math.max(map.getZoom(), 16));
+      startLocationWatch();
+      requestFastLocation();
+      return;
+    }
+    centerOnNextLocation.current = true;
+    centerRequestedAt.current = Date.now();
+    clearTimeout(centerFallbackTimer.current);
+    centerFallbackTimer.current = setTimeout(() => {
+      if (centerOnNextLocation.current && lastLocation.current) centerIfRequested(lastLocation.current, true);
+    }, 3000);
+    setLocating(true);
+    requestFastLocation();
+    startLocationWatch();
   };
   return (
     <div className="map-tools" ref={ref}>
-      <button type="button" onClick={() => map.zoomIn()} title="Vergrößern">+</button>
-      <button type="button" onClick={() => map.zoomOut()} title="Verkleinern">-</button>
+      <button type="button" onClick={() => setSearchOpen(true)} title="Ort suchen"><Search size={17} /></button>
       <button type="button" onClick={locate} title="Position" className={locating ? "loading" : ""}><LocateFixed size={17} /></button>
-      {locating ? <span className="map-status">Sucht...</span> : null}
       {error ? <button type="button" className="map-status error-status" onClick={() => setError("")}>{error}</button> : null}
+      {searchOpen ? createPortal(
+        <div className="overlay" onClick={() => { setSearchOpen(false); setSearchQ(""); }}>
+          <section className="modal small search-modal" onClick={(e) => e.stopPropagation()}>
+            <header><h2>Ort suchen</h2><button type="button" onClick={() => setSearchOpen(false)}><X size={18} /></button></header>
+            <input autoFocus value={searchQ} maxLength={INPUT_LIMITS.search} onChange={(e) => { const q = e.target.value; setSearchQ(q); doSearch(q); }} placeholder="Ort oder Adresse" />
+            <div className="search-results">
+              {searchResults.map((r, i) => <button key={i} type="button" onClick={() => selectResult(r)}>{r.display_name}</button>)}
+            </div>
+            {searching ? <span className="mini-loader" /> : null}
+          </section>
+        </div>,
+        document.body
+      ) : null}
     </div>
   );
 }
 
-function ShotLine({ abschuss, data }) {
+function ShotLine({ abschuss, data, pane }) {
   const origin = shotOrigin(abschuss, data);
   if (!origin) return null;
   const target = pointOf(abschuss);
-  return <Polyline positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
+  return <Polyline pane={pane} className="shot-line" positions={[[origin.lat, origin.lng], [target.lat, target.lng]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} />;
 }
 
 function PickTarget({ originPick }) {
@@ -675,13 +1294,13 @@ function PickTarget({ originPick }) {
   const origin = originPick.origin;
   return (
     <>
-      <Marker position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
-      {origin ? <Polyline positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#8f2f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
+      <Marker pane={MAP_PANES.pick} position={[target.lat, target.lng]} icon={markerIcon("abschuss")} />
+      {origin ? <Polyline pane={MAP_PANES.lines} className="shot-line" positions={[[Number(origin.lat), Number(origin.lng)], [Number(target.lat), Number(target.lng)]]} pathOptions={{ color: "#d32f2f", weight: 3, opacity: 1, dashArray: "7 7", lineCap: "round" }} /> : null}
     </>
   );
 }
 
-function FlyToSelection({ data, selected }) {
+function FlyToSelection({ data, selected, animate }) {
   const map = useMap();
   useEffect(() => {
     const item = findObject(data, selected);
@@ -689,22 +1308,38 @@ function FlyToSelection({ data, selected }) {
     const size = map.getSize();
     const target = map.latLngToContainerPoint([item.position_lat, item.position_lng]);
     const center = map.containerPointToLatLng([target.x, target.y + size.y / 4]);
-    map.setView(center, map.getZoom(), { animate: false });
+    if (animate) map.flyTo(center, map.getZoom(), { duration: 0.8 });
+    else map.setView(center, map.getZoom(), { animate: false });
   }, [selected?.id]);
   return null;
 }
 
 function SettingsPanel({ data, load, close }) {
-  const [local, setLocal] = useState({ ...data.settings });
+  const [local, setLocal] = useState({
+    ...data.settings,
+    map_date_filter_from: localStorage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from || "",
+    map_date_filter_to: localStorage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to || "",
+  });
   const [saving, setSaving] = useState(false);
   const s = data.settings;
-  const dirty = Object.keys(local).some((k) => local[k] !== s[k]);
+  const effFrom = localStorage.getItem("jagd-map-date-from") || s.map_date_filter_from || "";
+  const effTo = localStorage.getItem("jagd-map-date-to") || s.map_date_filter_to || "";
+  const dirty = Object.keys(local).some((k) => {
+    if (k === "map_date_filter_from") return local.map_date_filter_from !== effFrom;
+    if (k === "map_date_filter_to") return local.map_date_filter_to !== effTo;
+    return local[k] !== s[k];
+  });
   const apply = async () => {
     setSaving(true);
     try {
       const body = {};
       for (const key of Object.keys(local)) {
-        if (local[key] !== s[key]) body[key] = local[key];
+        if (key === "map_date_filter_from" || key === "map_date_filter_to") {
+          localStorage.setItem(`jagd-map-date-${key.replace("map_date_filter_", "")}`, local[key] || "");
+          if (local[key] !== s[key]) body[key] = local[key];
+        } else if (local[key] !== s[key]) {
+          body[key] = local[key];
+        }
       }
       if (Object.keys(body).length) await api("/api/settings", { method: "POST", body });
       await load();
@@ -715,23 +1350,22 @@ function SettingsPanel({ data, load, close }) {
     }
   };
   const toggle = (key) => setLocal((prev) => ({ ...prev, [key]: prev[key] ? 0 : 1 }));
-  const clearFrom = useLongPressClear(() => { setLocal((prev) => ({ ...prev, map_date_filter_from: "" })); });
-  const clearTo = useLongPressClear(() => { setLocal((prev) => ({ ...prev, map_date_filter_to: "" })); });
+  const clearFrom = () => { setLocal((prev) => ({ ...prev, map_date_filter_from: "" })); };
+  const clearTo = () => { setLocal((prev) => ({ ...prev, map_date_filter_to: "" })); };
   return (
     <div className="overlay">
       <section className="modal small">
         <header><h2><Layers size={18} /> Einstellungen</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {[
+          ["show_archived", "Archivierte"],
           ["show_self_location", "Eigene Position"],
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
-          ["show_archived", "Archivierte"],
+          ["show_geschlecht", "Geschlecht"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
-        <div className="two">
-          <label>Von<input type="date" disabled={saving} value={local.map_date_filter_from || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} {...clearFrom} /></label>
-          <label>Bis<input type="date" disabled={saving} value={local.map_date_filter_to || ""} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} {...clearTo} /></label>
-        </div>
+        <label>Von{local.map_date_filter_from ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />}</label>
+        <label>Bis{local.map_date_filter_to ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_to} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} /><button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_to: e.target.value }))} />}</label>
         <button className={`primary ${saving ? "is-loading" : ""}`} type="button" disabled={!dirty || saving} onClick={apply}>
           {saving ? "Speichert" : "Übernehmen"}
         </button>
@@ -745,22 +1379,26 @@ function CreateWindow({ point, close, openForm }) {
     <div className="overlay">
       <section className="modal small">
         <header><h2>Erstellen</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <div className="two">
+        <div className="create-choices">
           <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
-          <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Kamera</button>
+          <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Markierung</button>
+          <button type="button" className="choice create-choice-wide" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
         </div>
-        <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
       </section>
     </div>
   );
 }
 
+
 function initialFormValues(form) {
   const item = form.item || {};
   if (form.type === "kanzel") {
+    const typ = item.typ || "";
+    const isBuiltin = KANZEL_TYPEN.includes(typ);
     return {
       name: item.name || "",
-      typ: item.typ || "",
+      typ: isBuiltin ? typ : (typ ? "Sonstiges" : ""),
+      typ_sonstiges: isBuiltin ? "" : (typ || ""),
       bild_data: item.bild_data || "",
       bild2: item.bild2 || "",
       bild3: item.bild3 || "",
@@ -768,19 +1406,24 @@ function initialFormValues(form) {
     };
   }
   if (form.type === "kamera") {
+    const typ = item.typ || "";
+    const isBuiltin = MARKER_TYPEN.includes(typ);
     return {
-      name: item.name || "",
-      typ: item.typ || "",
+      typ: isBuiltin ? typ : (typ ? "Sonstiges" : ""),
+      typ_sonstiges: isBuiltin ? "" : (typ || ""),
       bild_data: item.bild_data || "",
       bild2: item.bild2 || "",
       bild3: item.bild3 || "",
       notiz: item.notiz || "",
     };
   }
+  const wildart = item.wildart || "";
+  const isBuiltinWild = WILDARTEN.includes(wildart);
   return {
     datum: item.datum || today(),
     uhrzeit: item.uhrzeit || (form.item ? "" : currentTime()),
-    wildart: item.wildart || "",
+    wildart: isBuiltinWild ? wildart : (wildart ? "Sonstiges" : ""),
+    wildart_sonstiges: isBuiltinWild ? "" : (wildart || ""),
     geschlecht: geschlechtValue(item.geschlecht),
     alter_text: item.alter_text || "",
     schuetz_name: item.schuetz_name || "",
@@ -803,12 +1446,16 @@ function initialOriginLabel(item) {
   return "";
 }
 
-function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
+function ObjectForm({ data, form, originPick, setOriginPick, close, load, refresh, setConfirmAction }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [weatherLoading, setWeatherLoading] = useState("");
   const [imageLoading, setImageLoading] = useState(null);
+  const [actionLoading, setActionLoading] = useState("");
+  const [itemStatus, setItemStatus] = useState(form.item?.status || "aktiv");
   const formId = useRef(form.id || localId()).current;
+  const [movedPoint, setMovedPoint] = useState(null);
+  const point = movedPoint || form.point;
   const datePickerRef = useRef(null);
   const timePickerRef = useRef(null);
   const [originLabel, setOriginLabel] = useState(() => initialOriginLabel(form.item));
@@ -817,6 +1464,14 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     if (!form.item) return "";
     return form.item.schuss_kanzel_id || "";
   });
+  const sortedKanzeln = useMemo(() => {
+    const p = point;
+    return [...data.kanzeln].sort((a, b) => {
+      const da = Math.hypot(a.position_lat - p.lat, a.position_lng - p.lng);
+      const db = Math.hypot(b.position_lat - p.lat, b.position_lng - p.lng);
+      return da - db;
+    });
+  }, [data.kanzeln, point.lat, point.lng]);
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const setImage = async (index, file) => {
     if (!file) return;
@@ -824,6 +1479,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     try {
       const key = index === 0 ? "bild_data" : `bild${index + 1}`;
       set(key, await readImage(file));
+    } catch (err) {
+      setError(err.message);
     } finally {
       setImageLoading(null);
     }
@@ -833,12 +1490,14 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     set(key, "");
   };
   const origin = originPick?.formId === formId ? originPick.origin : null;
-  const picking = originPick?.formId === formId && !originPick.origin;
+  const picking = originPick?.formId === formId && !originPick.origin && originPick.mode !== "richtung";
   const editing = form.mode === "edit";
+  const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : "/api/abschuesse";
+  const itemId = form.item?.id;
   const fillWeather = (target) => {
     if (form.type !== "abschuss") return;
     setWeatherLoading(target);
-    autofillWeather(form.point, values.datum || today(), values.uhrzeit || currentTime())
+    autofillWeather(point, values.datum || today(), values.uhrzeit || currentTime())
       .then((next) => {
         if (!next) return;
         setValues((current) => ({
@@ -865,24 +1524,77 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
     openNativePicker(timePickerRef.current);
   };
   useEffect(() => {
-    if (!origin) return;
+    const o = originPick?.formId === formId ? originPick?.origin : null;
+    if (!o || o.type === "richtung") return;
+    if (originPick.mode === "move") {
+      setMovedPoint({ lat: o.lat, lng: o.lng });
+      setOriginPick(null);
+      return;
+    }
     setOriginLabel("Punkt gewählt");
     setValues((current) => ({
       ...current,
-      schuss_lat: origin.lat ?? "",
-      schuss_lng: origin.lng ?? "",
+      schuss_lat: o.lat ?? "",
+      schuss_lng: o.lng ?? "",
       schuss_kanzel_id: "",
     }));
+    if (o.type === "kanzel") setSelectedKanzelId(o.id);
     setOriginPick(null);
-  }, [origin?.lat, origin?.lng, origin?.id, origin?.type, setOriginPick]);
+  }, [originPick, formId, setOriginPick]);
 
+  const archiveItem = async () => {
+    const nextStatus = itemStatus === "archiviert" ? "aktiv" : "archiviert";
+    if (!editing || !itemId) {
+      setItemStatus(nextStatus);
+      return;
+    }
+    setActionLoading("archive");
+    setError("");
+    try {
+      await api(`${path}/${itemId}`, { method: "PATCH", body: { status: nextStatus } });
+      setItemStatus(nextStatus);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const deleteItem = async () => {
+    if (!editing || !itemId) {
+      close();
+      return;
+    }
+    setActionLoading("delete");
+    setError("");
+    try {
+      await api(`${path}/${itemId}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading("");
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
+    if (form.type === "kanzel") {
+      if (!values.name.trim()) { setError("Name fehlt"); return; }
+    } else if (form.type === "kamera") {
+      if (!values.typ) { setError("Typ fehlt"); return; }
+    } else if (form.type === "abschuss") {
+      if (!values.wildart) { setError("Wildart fehlt"); return; }
+    }
     setSaving(true);
     setError("");
     try {
-      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: form.point.lat, position_lng: form.point.lng };
-      const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : "/api/abschuesse";
+      const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: point.lat, position_lng: point.lng };
+      body.status = itemStatus;
+      if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
+      delete body.typ_sonstiges;
+      if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
+      delete body.wildart_sonstiges;
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
       await load();
     } catch (err) {
@@ -894,47 +1606,49 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
 
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
-      <form className="modal" onSubmit={submit}>
-        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Kamera" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+      <form className="modal" noValidate onSubmit={submit}>
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
         <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} />
         {form.type === "kanzel" || form.type === "kamera" ? (
           <>
-            <label>Name<input required value={values.name} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Typ<input value={values.typ} onChange={(e) => set("typ", e.target.value)} /></label>
-            <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
+            {form.type === "kamera" ? (
+              <>
+                <label>Typ<select required value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{MARKER_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+              </>
+            ) : (
+              <>
+                <label>Name<input required value={values.name} maxLength={INPUT_LIMITS.itemName} onChange={(e) => set("name", e.target.value)} /></label>
+                <label>Typ<select value={values.typ} onChange={(e) => set("typ", e.target.value)}><option value="">Auswählen</option>{KANZEL_TYPEN.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+              </>
+            )}
+            <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         ) : (
           <>
-            <div className="two">
-              <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((wildart) => <option key={wildart} value={wildart}>{wildart}</option>)}</select></label>
-              <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
-            </div>
-            <div className="two">
-              <label>Alter (Jahre)<input inputMode="decimal" value={values.alter_text} onChange={(e) => set("alter_text", e.target.value)} /></label>
-              <label>Gewicht (kg)<input inputMode="decimal" value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
-            </div>
-            <div className="two">
-              <label>Zeitpunkt<span className="native-date-time date-time-split">
-                <span className="date-time-pair">
-                  <button type="button" className="date-time-trigger" onClick={() => {
-                    if (datePickerRef.current) datePickerRef.current.value = values.datum || today();
-                    openNativePicker(datePickerRef.current);
-                  }}>{values.datum || today()}</button>
-                  <input ref={datePickerRef} className="native-picker" type="date" onChange={(e) => set("datum", e.target.value)} />
-                </span>
-                <span className="date-time-pair">
-                  <button type="button" className="date-time-trigger" onContextMenu={(e) => { e.preventDefault(); set("uhrzeit", ""); }} onClick={() => activateTimePicker()}>{values.uhrzeit || "--:--"}</button>
-                  <input ref={timePickerRef} className="native-picker" type="time" onChange={(e) => set("uhrzeit", e.target.value)} />
-                </span>
-              </span></label>
-              <label>Schütze<input list="schuetzen" value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
-            </div>
-
+            <label>Wildart<select required value={values.wildart} onChange={(e) => set("wildart", e.target.value)}><option value="">Auswählen</option>{WILDARTEN.map((w) => <option key={w} value={w}>{w}</option>)}</select></label>
+            {values.wildart === "Sonstiges" ? <label><input value={values.wildart_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("wildart_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
+            <label>Geschlecht<select value={values.geschlecht} onChange={(e) => set("geschlecht", e.target.value)}><option value="">offen</option><option value="männlich">männlich</option><option value="weiblich">weiblich</option></select></label>
+            <label>Alter (Jahre)<input inputMode="text" maxLength={INPUT_LIMITS.age} value={values.alter_text} onChange={(e) => set("alter_text", e.target.value)} /></label>
+            <label>Gewicht (kg)<input inputMode="text" maxLength={INPUT_LIMITS.decimal} value={values.gewicht_kg} onChange={(e) => set("gewicht_kg", e.target.value)} /></label>
+            <label>Zeitpunkt<span className="native-date-time date-time-split">
+              <span className="date-time-pair">
+                <button type="button" className="date-time-trigger" onClick={() => {
+                  if (datePickerRef.current) datePickerRef.current.value = values.datum || today();
+                  openNativePicker(datePickerRef.current);
+                }}>{values.datum || today()}</button>
+                <input ref={datePickerRef} className="native-picker" type="date" onChange={(e) => set("datum", e.target.value)} />
+              </span>
+              <span className="date-time-pair">
+                <button type="button" className="date-time-trigger" onContextMenu={(e) => { e.preventDefault(); set("uhrzeit", ""); }} onClick={() => activateTimePicker()}>{values.uhrzeit || "--:--"}</button>
+                <input ref={timePickerRef} className="native-picker" type="time" onChange={(e) => set("uhrzeit", e.target.value)} />
+              </span>
+            </span></label>
+            <label>Schütze<input list="schuetzen" maxLength={INPUT_LIMITS.person} value={values.schuetz_name} onChange={(e) => set("schuetz_name", e.target.value)} /></label>
             <datalist id="schuetzen">{data.schuetzen.map((name) => <option key={name} value={name} />)}</datalist>
-            <div className="two">
-              <label>Wetter<span className="field-with-button"><input value={values.wetter} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
-              <label>Wind<span className="field-with-button"><input value={values.wind} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
-            </div>
+            <label>Wetter<span className="field-with-button"><input value={values.wetter} maxLength={INPUT_LIMITS.shortText} onChange={(e) => set("wetter", e.target.value)} /><button type="button" disabled={weatherLoading === "wetter"} className={`image-remove autofill-button ${weatherLoading === "wetter" ? "is-loading" : ""}`} onClick={() => fillWeather("wetter")} aria-label="Wetter automatisch füllen">A</button></span></label>
+            <label>Wind<span className="field-with-button"><input value={values.wind} maxLength={INPUT_LIMITS.shortText} onChange={(e) => set("wind", e.target.value)} /><button type="button" disabled={weatherLoading === "wind"} className={`image-remove autofill-button ${weatherLoading === "wind" ? "is-loading" : ""}`} onClick={() => fillWeather("wind")} aria-label="Wind automatisch füllen">A</button></span></label>
             <label>Schussort<select value={selectedKanzelId} onChange={(e) => {
               const id = e.target.value;
               setSelectedKanzelId(id);
@@ -947,7 +1661,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                 schuss_kanzel_id: "",
               }));
               setOriginLabel("Punkt gewählt");
-            }}><option value="">Kanzel</option>{data.kanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
+            }}><option value="">{originLabel === "Punkt gewählt" && !selectedKanzelId ? "Frei ausgewählt" : "Kanzel auswählen"}</option>{sortedKanzeln.map((kanzel) => <option key={kanzel.id} value={kanzel.id}>{kanzel.name}</option>)}</select></label>
             <div className="origin-row">
               {originLabel === "Punkt gewählt" ? (
                 <button type="button" className="origin-remove" onClick={() => {
@@ -956,17 +1670,62 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load }) {
                   setSelectedKanzelId("");
                 }}><Trash2 size={16} /></button>
               ) : (
-                <button type="button" onClick={() => setOriginPick({ formId, target: form.point, origin: null })}>Schussursprung frei wählen</button>
+                <button type="button" onClick={() => setOriginPick({ formId, mode: "origin", target: point, origin: null })}>Von der Karte auswählen</button>
               )}
             </div>
-            <label>Bemerkungen<textarea value={values.notiz} onChange={(e) => set("notiz", e.target.value)} /></label>
+            <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         )}
         <p className="error">{error}</p>
-        <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving}>{saving ? "Speichert" : "Speichern"}</button>
+        <div className="form-buttons">
+          <div className="form-action-row">
+            <button className="quiet move-button" type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: point, origin: null })}>Verschieben</button>
+            <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`quiet ${actionLoading === "archive" ? "is-loading" : ""}`} onClick={archiveItem}>{itemStatus === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+            <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => editing ? setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: "Oft ist es besser, das Element zu archivieren.", action: deleteItem }) : deleteItem()}><Trash2 size={16} />Löschen</button>
+          </div>
+          <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || Boolean(actionLoading) || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
+        </div>
       </form>
     </div>
   );
+}
+
+function NoteField({ value, onChange }) {
+  const [fullscreen, setFullscreen] = useState(false);
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  const [localValue, setLocalValue] = useState("");
+  const maxLength = 3000;
+  const openFullscreen = () => {
+    if (!isMobile) return;
+    setLocalValue(value);
+    setFullscreen(true);
+  };
+  const closeFullscreen = () => {
+    onChange(localValue.slice(0, maxLength));
+    setFullscreen(false);
+  };
+  return (
+    <>
+      <label>Bemerkungen<textarea value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} onFocus={openFullscreen} /><span className="note-counter">{value.length}/{maxLength}</span></label>
+      {fullscreen ? createPortal(
+        <div className="overlay" onClick={closeFullscreen}>
+          <div className="modal small" onClick={(e) => e.stopPropagation()}>
+            <header><h2>Bemerkungen</h2><button type="button" onClick={closeFullscreen}><X size={18} /></button></header>
+            <textarea autoFocus maxLength={maxLength} value={localValue} onChange={(e) => setLocalValue(e.target.value)} style={{ minHeight: "30vh" }} />
+            <span className="note-counter">{localValue.length}/{maxLength}</span>
+          </div>
+        </div>,
+        document.body
+      ) : null}
+    </>
+  );
+}
+
+function ImagePreview({ src, className = "" }) {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => setLoaded(false), [src]);
+  if (!src) return null;
+  return <img key={src} className={`${className} ${loaded ? "is-loaded" : ""}`} src={src} alt="" onLoad={() => setLoaded(true)} />;
 }
 
 function ImageSlots({ images, setImage, clearImage, loading }) {
@@ -975,7 +1734,10 @@ function ImageSlots({ images, setImage, clearImage, loading }) {
       {[0, 1, 2].map((i) => (
         <div key={i} className={`image-slot ${images[i] ? "filled" : ""} ${loading === i ? "loading" : ""}`}>
           {images[i] ? (
-            <button type="button" className="image-remove" onClick={() => clearImage(i)} aria-label="Bild entfernen"><Trash2 size={16} /></button>
+            <>
+              <ImagePreview src={imageSrc(images[i])} className="image-slot-preview" />
+              <button type="button" className="image-remove" onClick={() => clearImage(i)} aria-label="Bild entfernen"><Trash2 size={16} /></button>
+            </>
           ) : (
             <label className={`upload-button ${loading === i ? "is-loading" : ""}`}>
               {loading === i ? "Lädt" : <>+ Bild {i + 1}</>}
@@ -1085,12 +1847,12 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
           {detailImages.length ? (
             <div className="detail-thumbs">
               {detailImages.map((src, i) => (
-                <button key={i} type="button" className="image-thumb" onClick={() => { transformRef.current = { scale: 1, x: 0, y: 0 }; setImageIdx(i); setImageOpen(true); }}><img src={src} alt="" /></button>
+                <button key={src} type="button" className="image-thumb" onClick={() => { transformRef.current = { scale: 1, x: 0, y: 0 }; setImageIdx(i); setImageOpen(true); }}><ImagePreview src={src} /></button>
               ))}
             </div>
           ) : null}
           <div className="detail-heading">
-            <h2>{item.name || item.wildart}</h2>
+            <h2>{selected.type === "kamera" ? item.typ : (item.name || item.wildart)}</h2>
             {item.status === "archiviert" ? <p className="muted">Archiviert</p> : null}
           </div>
         </div>
@@ -1111,7 +1873,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
           <div
             className="image-stage"
             ref={stageRef}
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event) => { event.stopPropagation(); if (transformRef.current.scale <= 1) setImageOpen(false); }}
             onWheel={(event) => {
               event.preventDefault();
               zoomImageAt(event.clientX, event.clientY, transformRef.current.scale + (event.deltaY < 0 ? 0.45 : -0.45));
@@ -1158,7 +1920,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
               dragRef.current = null;
             }}
           >
-            <img ref={imageRef} src={detailImages[imageIdx]} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
+            <img key={detailImages[imageIdx]} ref={imageRef} src={detailImages[imageIdx]} alt="" style={{ transform: "translate3d(0, 0, 0) scale(1)" }} />
           </div>
         </div>
       ), document.body) : null}
@@ -1185,12 +1947,18 @@ function Rows({ selected, item, data }) {
       </dl>
     );
   }
-  return <dl><dt>Name</dt><dd>{item.name}</dd>{item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
+  return <dl>{selected.type !== "kamera" && item.typ ? <><dt>Typ</dt><dd>{item.typ}</dd></> : null}<dt>Position</dt><dd>{positionText(item)}</dd></dl>;
 }
 
-function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction }) {
-  const clearFrom = useLongPressClear(() => setFilters((current) => ({ ...current, from: "" })));
-  const clearTo = useLongPressClear(() => setFilters((current) => ({ ...current, to: "" })));
+function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction, setAnimateMove }) {
+  const [sortBy, setSortBy] = useState("datum");
+  const [sortDir, setSortDir] = useState("desc");
+  const clearFrom = () => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-list-date-from"); };
+  const clearTo = () => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-list-date-to"); };
+  const sortOptions = [{ key: "datum", label: "Datum" }, { key: "schussdistanz", label: "Schussdistanz" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
+  useEffect(() => {
+    if (tab === "abschuesse") { setSortBy("datum"); setSortDir("desc"); }
+  }, [tab]);
   const items = data[tab]
     .filter((item) => {
       const q = filters.q.toLowerCase();
@@ -1198,24 +1966,51 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       const dateOk = tab !== "abschuesse" || ((!filters.from || item.datum >= filters.from) && (!filters.to || item.datum <= filters.to));
       return statusOk && dateOk && (!q || JSON.stringify(item).toLowerCase().includes(q));
     })
-    .sort((a, b) => tab === "abschuesse"
-      ? compareAbschuss(b, a)
-      : String(a.name || "").localeCompare(String(b.name || ""), "de", { sensitivity: "base" }));
+    .sort((a, b) => {
+      if (sortBy === "datum") return (sortDir === "desc" ? 1 : -1) * compareAbschuss(b, a);
+      if (sortBy === "schussdistanz") {
+        const va = shotDistance(a, data);
+        const vb = shotDistance(b, data);
+        if (va === null && vb === null) return compareAbschuss(b, a);
+        if (va === null) return 1;
+        if (vb === null) return -1;
+        return sortDir === "asc" ? va - vb : vb - va;
+      }
+      const va = a[sortBy] ?? "";
+      const vb = b[sortBy] ?? "";
+      const na = typeof va === "string" ? (Number(va.replace(",", ".").match(/\d[\d.]*/)?.[0]) || 0) : Number(va) || 0;
+      const nb = typeof vb === "string" ? (Number(vb.replace(",", ".").match(/\d[\d.]*/)?.[0]) || 0) : Number(vb) || 0;
+      const cmp = Number.isFinite(na) && Number.isFinite(nb) ? na - nb : String(va).localeCompare(String(vb), "de", { sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
   return (
     <main className="list-screen">
-      <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
+      <div className="list-shell">
+        <nav className="tabs wide">{["kanzeln", "kameras", "abschuesse"].map((t) => <button type="button" key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label(t)}</button>)}</nav>
       <div className="filters">
-        <label>Suchen<input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
+        <label>Suchen<input value={filters.q} maxLength={INPUT_LIMITS.search} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
-        {tab === "abschuesse" ? <label>Von<input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} {...clearFrom} /></label> : null}
-        {tab === "abschuesse" ? <label>Bis<input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} {...clearTo} /></label> : null}
+        {tab === "abschuesse" ? <label>Von{filters.from ? <span className="field-with-button"><input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} />}</label> : null}
+        {tab === "abschuesse" ? <label>Bis{filters.to ? <span className="field-with-button"><input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} /><button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} />}</label> : null}
       </div>
+      {tab === "abschuesse" ? (
+        <label className="sort-label">Sortierung
+        <div className="sort-row">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          {sortOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+        <button type="button" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")} title={sortDir === "asc" ? "Aufsteigend" : "Absteigend"}>
+          {sortDir === "asc" ? "\u2191" : "\u2193"}
+        </button>
+      </div>
+      </label>) : null}
       <section className="rows">{items.map((item) => <article key={item.id} className={item.status === "archiviert" ? "is-archived" : ""}>
-        <div><strong>{item.name || item.wildart}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
+        <div><strong>{tab === "kameras" ? item.typ : (item.name || item.wildart)}{item.status === "archiviert" ? <em>Archiviert</em> : null}</strong><span>{rowMeta(tab, item, data)}</span></div>
         <div className="row-actions">
-          <button type="button" onClick={() => { openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
+          <button type="button" onClick={() => { setAnimateMove(false); openSelection({ type: singular(tab), id: item.id }); setView("map"); }}>Anzeigen</button>
         </div>
       </article>)}</section>
+      </div>
     </main>
   );
 }
@@ -1224,7 +2019,9 @@ function useVisibleData(data) {
   return useMemo(() => {
     const archived = Number(data.settings.show_archived);
     const active = (item) => archived || item.status !== "archiviert";
-    const date = (item) => (!data.settings.map_date_filter_from || item.datum >= data.settings.map_date_filter_from) && (!data.settings.map_date_filter_to || item.datum <= data.settings.map_date_filter_to);
+    const from = localStorage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from;
+    const to = localStorage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to;
+    const date = (item) => (!from || item.datum >= from) && (!to || item.datum <= to);
     return {
       kanzeln: data.kanzeln.filter(active),
       kameras: data.kameras.filter(active),
@@ -1234,7 +2031,7 @@ function useVisibleData(data) {
 }
 
 function markerCenter(items) {
-  if (!items.length) return DURCHHAUSEN_CENTER;
+  if (!items.length) return DEFAULT_MAP_CENTER;
   const sum = items.reduce((acc, item) => ({
     lat: acc.lat + Number(item.position_lat),
     lng: acc.lng + Number(item.position_lng),
@@ -1302,7 +2099,7 @@ function singular(tab) {
 
 function label(tab) {
   if (tab === "kanzeln") return "Kanzeln";
-  if (tab === "kameras") return "Kameras";
+  if (tab === "kameras") return "Markierungen";
   return "Abschüsse";
 }
 
@@ -1323,6 +2120,7 @@ function rowMeta(tab, item, data) {
 }
 
 function Root() {
+  if (window.location.pathname === "/admin") return <AdminPage />;
   return <App />;
 }
 
