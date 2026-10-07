@@ -90,6 +90,34 @@ input[type="date"], input[type="time"] { appearance: none; -webkit-appearance: n
   min-height: 18px;
   text-align: center;
 }
+.legal-link {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.legal-screen {
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  background: var(--bg);
+}
+.legal-card {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  line-height: 1.55;
+}
+.legal-card h1 { margin-bottom: 8px; }
+.legal-card h2 { margin: 28px 0 8px; }
+.legal-card p { margin-bottom: 12px; }
+.legal-card a { color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
+.legal-card code { overflow-wrap: anywhere; }
+.legal-back { display: inline-block; margin-top: 18px; }
 .admin-screen {
   min-height: 100%;
   background: var(--bg);
