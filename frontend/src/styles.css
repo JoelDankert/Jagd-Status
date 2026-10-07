@@ -387,12 +387,8 @@ button:disabled, input:disabled {
 
 .map-shell { min-height: 0; position: relative; overflow: hidden; }
 .map { height: 100%; width: 100%; background: var(--bg); overflow: hidden; }
-.map.is-map-interacting .shot-line,
-.map.is-map-interacting .pin.aktivitaet {
+.map.is-map-interacting .shot-line {
   opacity: 0 !important;
-}
-.map.is-map-panning .pin.aktivitaet .pin-pulse {
-  animation-play-state: paused !important;
 }
 .leaflet-pane,
 .leaflet-marker-pane {
@@ -535,32 +531,6 @@ button:disabled, input:disabled {
 .hide-gender .pin.geschlecht-weiblich span { box-shadow: 0 0 0 2px #fff; }
 .hide-gender .pin.is-archived.geschlecht-maennlich span,
 .hide-gender .pin.is-archived.geschlecht-weiblich span { box-shadow: 0 0 0 1px #fff; }
-.pin.aktivitaet {
-  width: 96px !important;
-  height: 96px !important;
-  background: transparent;
-  border: 0;
-  overflow: visible;
-}
-.pin.aktivitaet span {
-  display: none;
-}
-.pin.aktivitaet .activity-pulse-layer {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  display: grid;
-  place-items: center;
-  overflow: visible;
-  pointer-events: none;
-  transform: translate(-50%, -50%) var(--activity-rotation, rotate(0deg));
-  transform-origin: center;
-}
-.pin.aktivitaet .pin-pulse {
-  background: transparent;
-  border: 8px solid rgba(211, 47, 47, 1);
-  border-radius: 50%;
-}
 .pin.is-archived {
   width: 18px !important;
   height: 18px !important;
@@ -792,6 +762,8 @@ dd { margin: 0; text-align: right; }
   background: rgba(12, 17, 13, .38);
 }
 .choice { justify-content: flex-start; padding: 10px 12px; }
+.create-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.create-choice-wide { grid-column: 1 / -1; }
 .error { min-height: 18px; color: var(--red); font-size: 14px; margin: 0; }
 .origin-row {
   display: grid;

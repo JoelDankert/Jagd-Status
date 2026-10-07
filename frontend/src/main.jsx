@@ -63,22 +63,11 @@ const MARKER_MAP_ZOOM = 14;
 const IMAGE_MAX_ZOOM = 8;
 const MAX_PULSE_BPM = 150;
 const MIN_PULSE_BPM = 20;
-const ACTIVITY_PULSE_COUNT = 8;
-const ACTIVITY_BASE_ZOOM = 14;
-const ACTIVITY_BASE_DIAMETER_PX = 120;
-const ACTIVITY_MAX_DIAMETER_PX = 840;
-const ACTIVITY_HITBOX_PX = 96;
-const EARTH_CIRCUMFERENCE_METERS = 40075016.686;
-const ACTIVITY_PING_RADIUS_METERS = Math.round(
-  (ACTIVITY_BASE_DIAMETER_PX / 2) * (EARTH_CIRCUMFERENCE_METERS * Math.cos((DEFAULT_MAP_CENTER[0] * Math.PI) / 180)) / (256 * 2 ** ACTIVITY_BASE_ZOOM)
-);
-
 const MAP_PANES = {
   lines: "jagd-lines",
   kanzeln: "jagd-kanzeln",
   kameras: "jagd-kameras",
   abschuesse: "jagd-abschuesse",
-  aktivitaeten: "jagd-aktivitaeten",
   pick: "jagd-pick",
   self: "jagd-self",
 };
@@ -87,7 +76,6 @@ const MAP_PANE_STYLES = {
   [MAP_PANES.kanzeln]: { zIndex: 640, overflow: "visible" },
   [MAP_PANES.kameras]: { zIndex: 620, overflow: "visible" },
   [MAP_PANES.abschuesse]: { zIndex: 630, overflow: "visible" },
-  [MAP_PANES.aktivitaeten]: { zIndex: 600, overflow: "visible" },
   [MAP_PANES.pick]: { zIndex: 700, overflow: "visible" },
   [MAP_PANES.self]: { zIndex: 710, overflow: "visible" },
 };
@@ -319,78 +307,31 @@ function shotPulseTiming(item) {
   };
 }
 
-function aktivitaetPulseTiming(item) {
-  if (!item) return null;
-  const created = new Date(item.created_at).getTime();
-  const durationMs = (Number(item.dauer_stunden) || 24) * 3600000;
-  const age = Math.max(0, Date.now() - created);
-  const remainingMs = Math.max(0, durationMs - age);
-  if (remainingMs <= 0) return null;
-  const progress = age / durationMs;
-  const bpm = 40 + 80 * Math.pow(1 - progress, 1.25);
-  const cycleMs = Math.round(60000 / bpm);
-  const fixedAnimMs = 4000;
-  return {
-    cycleMs,
-    pulseCount: Math.max(1, Math.round(fixedAnimMs / cycleMs)),
-  };
-}
-
-function destinationPoint(lat, lng, meters, bearingDegrees) {
-  const radius = 6371008.8;
-  const angularDistance = meters / radius;
-  const bearing = (Number(bearingDegrees) * Math.PI) / 180;
-  const lat1 = (Number(lat) * Math.PI) / 180;
-  const lng1 = (Number(lng) * Math.PI) / 180;
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(angularDistance) +
-    Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
-  );
-  const lng2 = lng1 + Math.atan2(
-    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
-    Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
-  );
-  return [(lat2 * 180) / Math.PI, (((lng2 * 180) / Math.PI + 540) % 360) - 180];
-}
-
 const markerIcon = (type, item = null, archived = false, pulse = null) => {
-  const isActivity = type === "aktivitaet";
   const kameraSize = archived ? 9 : 12;
   const otherSize = archived ? 18 : 25;
   const shotSize = archived ? 14 : 18;
-  const size = type === "kamera" ? kameraSize : isActivity ? ACTIVITY_HITBOX_PX : type === "abschuss" ? shotSize : otherSize;
-  const pulseName = pulse ? `${isActivity ? "act" : "shot"}-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
-  const pulseCount = isActivity && pulse?.pulseCount ? pulse.pulseCount : 8;
-  const loopMs = pulse ? (isActivity ? pulse.cycleMs * pulseCount : pulse.cycleMs * pulseCount) : 0;
-  const pulseScale = isActivity ? "1.4" : "3.5";
-  const pulseEnd = !isActivity && pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
-  const pulsePeak = !isActivity && pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
-  const hasDir = isActivity && item?.richtung_grad != null;
-  const pulseKeyframes = isActivity
-    ? (hasDir
-      ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}25%{opacity:1;transform:scale(.2)}50%{opacity:1;transform:scale(.4)}75%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`
-      : `@keyframes ${pulseName}{0%{opacity:0;transform:scale(0)}25%{opacity:1;transform:scale(.2)}50%{opacity:0;transform:scale(.4)}75%{opacity:0;transform:scale(.7)}100%{opacity:0;transform:scale(${pulseScale})}}`)
-    : pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(1.3)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
+  const size = type === "kamera" ? kameraSize : type === "abschuss" ? shotSize : otherSize;
+  const pulseName = pulse ? `shot-pulse-${String(item?.id || "x").replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
+  const pulseCount = 8;
+  const loopMs = pulse ? pulse.cycleMs * pulseCount : 0;
+  const pulseScale = "3.5";
+  const pulseEnd = pulse ? Math.min(92, Math.max(4, Math.round((pulse.lifeMs / loopMs) * 1000) / 10)) : 0;
+  const pulsePeak = pulse ? Math.min(4, Math.max(1.5, Math.round(pulseEnd * 0.18 * 10) / 10)) : 0;
+  const pulseKeyframes = pulse ? `@keyframes ${pulseName}{0%{opacity:0;transform:scale(.7)}${pulsePeak}%{opacity:1;transform:scale(1.3)}${pulseEnd}%{opacity:0;transform:scale(${pulseScale})}100%{opacity:0;transform:scale(${pulseScale})}}` : "";
   const pulseStyle = pulse ? `<style>${pulseKeyframes}</style>` : "";
-  const dirStyle = isActivity && item?.richtung_grad != null ? `--activity-rotation:rotate(${Number(item.richtung_grad) - 90}deg)` : "";
   const pulseIcons = pulse ? Array.from({ length: pulseCount }, (_, index) => {
     const start = index * pulse.cycleMs;
-    const dirMask = hasDir
-      ? `;-webkit-mask-image:conic-gradient(rgba(0,0,0,0) 0deg,rgba(0,0,0,0) 40deg,rgba(0,0,0,1) 90deg,rgba(0,0,0,0) 140deg,rgba(0,0,0,0) 360deg);mask-image:conic-gradient(rgba(0,0,0,0) 0deg,rgba(0,0,0,0) 40deg,rgba(0,0,0,1) 90deg,rgba(0,0,0,0) 140deg,rgba(0,0,0,0) 360deg)`
-      : "";
-    const animStyle = isActivity
-      ? `animation:${pulseName} ${loopMs}ms linear infinite backwards;animation-delay:${start}ms${dirMask}`
-      : `opacity:0;animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms`;
+    const animStyle = `opacity:0;animation:${pulseName} ${loopMs}ms linear infinite;animation-delay:${start}ms`;
     return `<i class="pin-pulse" style="${animStyle}"></i>`;
   }).join("") : "";
-  const pulseHtml = pulse ? `${pulseStyle}${isActivity ? `<div class="activity-pulse-layer" style="${dirStyle}">${pulseIcons}</div>` : pulseIcons}` : "";
+  const pulseHtml = pulse ? `${pulseStyle}${pulseIcons}` : "";
   const markerColor = type === "kamera" ? (item?.typ ? (MARKER_FARBE[item.typ] || "#546e7a") : "#c2185b") : "";
   const styleAttr = markerColor ? `--pin-bg:${markerColor}` : "";
-  const labelHtml = "";
   const genderClass = type === "abschuss" && item?.geschlecht && item.geschlecht !== "offen" ? ` geschlecht-${item.geschlecht.replace("ä","ae").replace("ö","oe").replace("ü","ue")}` : "";
   return L.divIcon({
     className: `pin ${type} ${type === "abschuss" ? (WILDART_KLASSEN[item?.wildart] || "wild-sonstiges") + genderClass : ""} ${archived ? "is-archived" : ""}`,
-    html: isActivity ? `${pulseHtml}${labelHtml}` : `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
+    html: `${pulseHtml}<span style="${styleAttr}">${type === "kanzel" ? markerLetter(item?.name, "K", 3) : type === "kamera" ? markerInitial(item?.typ, "M") : markerInitial(item?.wildart, "A")}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -1078,15 +1019,6 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         {Number(data.settings.show_abschuesse) ? visible.abschuesse.map((abschuss, i) => (
           <ShotMarker key={abschuss.id} abschuss={abschuss} openSelection={openSelection} setAnimateMove={setAnimateMove} pane={MAP_PANES.abschuesse} zIndexOffset={visible.abschuesse.length - i} />
         )) : null}
-        {Number(data.settings.show_aktivitaeten) ? data.aktivitaeten?.map((aktivitaet) => (
-          <ActivityMarker
-            key={aktivitaet.id}
-            aktivitaet={aktivitaet}
-            pane={MAP_PANES.aktivitaeten}
-            openSelection={openSelection}
-            setAnimateMove={setAnimateMove}
-          />
-        )) : null}
         {originPick?.origin?.lat && originPick.mode !== "move" ? <Marker pane={MAP_PANES.pick} position={[originPick.origin.lat, originPick.origin.lng]} icon={originIcon} /> : null}
         {selfPos && Number(data.settings.show_self_location) ? <Marker pane={MAP_PANES.self} position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
@@ -1128,82 +1060,6 @@ const ShotMarker = React.memo(function ShotMarker({ abschuss, openSelection, set
       eventHandlers={eventHandlers}
     />
   );
-});
-
-const ActivityMarker = React.memo(function ActivityMarker({ aktivitaet, pane, openSelection, setAnimateMove }) {
-  const map = useMap();
-  const markerRef = useRef(null);
-  const clickRef = useRef(null);
-  const pulse = useMemo(
-    () => aktivitaetPulseTiming(aktivitaet),
-    [aktivitaet.created_at, aktivitaet.dauer_stunden]
-  );
-
-  useEffect(() => {
-    clickRef.current = () => {
-      setAnimateMove(false);
-      openSelection({ type: "aktivitaet", id: aktivitaet.id });
-    };
-  }, [aktivitaet.id, openSelection, setAnimateMove]);
-
-  useEffect(() => {
-    const lat = Number(aktivitaet.position_lat);
-    const lng = Number(aktivitaet.position_lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
-
-    const marker = L.marker([lat, lng], {
-      icon: markerIcon("aktivitaet", aktivitaet, false, pulse),
-      pane,
-      zIndexOffset: 1000,
-    });
-    const handleClick = () => clickRef.current?.();
-    marker.on("click", handleClick);
-    marker.addTo(map);
-    markerRef.current = marker;
-    let frame = 0;
-
-    const setSize = () => {
-      const icon = marker.getElement();
-      if (!icon) return;
-      const center = map.latLngToLayerPoint([lat, lng]);
-      const east = map.latLngToLayerPoint(destinationPoint(lat, lng, ACTIVITY_PING_RADIUS_METERS, 90));
-      const size = Math.min(ACTIVITY_MAX_DIAMETER_PX, Math.max(12, center.distanceTo(east) * 2));
-      const layer = icon.querySelector(".activity-pulse-layer");
-      if (!layer) return;
-      layer.style.width = `${size}px`;
-      layer.style.height = `${size}px`;
-    };
-
-    const updateSize = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        setSize();
-      });
-    };
-
-    setSize();
-    map.on("zoomend viewreset resize", updateSize);
-    return () => {
-      if (frame) cancelAnimationFrame(frame);
-      map.off("zoomend viewreset resize", updateSize);
-      marker.off("click", handleClick);
-      marker.remove();
-      if (markerRef.current === marker) markerRef.current = null;
-    };
-  }, [
-    aktivitaet.id,
-    aktivitaet.position_lat,
-    aktivitaet.position_lng,
-    aktivitaet.status,
-    aktivitaet.name,
-    aktivitaet.richtung_grad,
-    map,
-    pulse,
-    pane,
-  ]);
-
-  return null;
 });
 
 function MapEvents({ data, openCreate, originPick, setOriginPick }) {
@@ -1506,7 +1362,6 @@ function SettingsPanel({ data, load, close }) {
           ["show_kanzeln", "Kanzeln"],
           ["show_kameras", "Kameras"],
           ["show_abschuesse", "Abschüsse"],
-          ["show_aktivitaeten", "Aktivitäten"],
           ["show_geschlecht", "Geschlecht"],
         ].map(([key, label]) => <label className="check setting-row" key={key}><input type="checkbox" disabled={saving} checked={Boolean(Number(local[key]))} onChange={() => toggle(key)} />{label}</label>)}
         <label>Von{local.map_date_filter_from ? <span className="field-with-button"><input type="date" disabled={saving} value={local.map_date_filter_from} onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" disabled={saving} value="" onChange={(e) => setLocal((prev) => ({ ...prev, map_date_filter_from: e.target.value }))} />}</label>
@@ -1524,41 +1379,16 @@ function CreateWindow({ point, close, openForm }) {
     <div className="overlay">
       <section className="modal small">
         <header><h2>Erstellen</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        <div className="two">
+        <div className="create-choices">
           <button type="button" className="choice" onClick={() => openForm({ type: "kanzel", point })}>Kanzel</button>
           <button type="button" className="choice" onClick={() => openForm({ type: "kamera", point })}>Markierung</button>
-        </div>
-        <div className="two">
-          <button type="button" className="choice" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
-          <button type="button" className="choice" onClick={() => openForm({ type: "aktivitaet", point })}>Aktivität</button>
+          <button type="button" className="choice create-choice-wide" onClick={() => openForm({ type: "abschuss", point })}>Abschuss</button>
         </div>
       </section>
     </div>
   );
 }
 
-
-function activityTotalHours(item) {
-  return Number(item.dauer_stunden) || 24;
-}
-
-function activityRemainingHours(item) {
-  const created = new Date(item.created_at).getTime();
-  if (!Number.isFinite(created)) return activityTotalHours(item);
-  const remainingMs = Math.max(0, activityTotalHours(item) * 3600000 - (Date.now() - created));
-  return remainingMs / 3600000;
-}
-
-const ACTIVITY_DURATION_KEY = "jagd-activity-duration-hours";
-
-function storedActivityDuration() {
-  const stored = localStorage.getItem(ACTIVITY_DURATION_KEY);
-  return stored ? decimalInput(stored) || 24 : 24;
-}
-
-function formatActivityHours(hours) {
-  return Number(hours).toLocaleString("de", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 function initialFormValues(form) {
   const item = form.item || {};
@@ -1584,14 +1414,6 @@ function initialFormValues(form) {
       bild_data: item.bild_data || "",
       bild2: item.bild2 || "",
       bild3: item.bild3 || "",
-      notiz: item.notiz || "",
-    };
-  }
-  if (form.type === "aktivitaet") {
-    return {
-      name: item.name || "",
-      dauer_stunden: form.item ? Math.max(0.01, Math.round(activityRemainingHours(item) * 100) / 100) : (item.dauer_stunden ?? storedActivityDuration()),
-      richtung_grad: item.richtung_grad ?? "",
       notiz: item.notiz || "",
     };
   }
@@ -1670,7 +1492,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
   const origin = originPick?.formId === formId ? originPick.origin : null;
   const picking = originPick?.formId === formId && !originPick.origin && originPick.mode !== "richtung";
   const editing = form.mode === "edit";
-  const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : form.type === "aktivitaet" ? "/api/aktivitaeten" : "/api/abschuesse";
+  const path = form.type === "kanzel" ? "/api/kanzeln" : form.type === "kamera" ? "/api/kameras" : "/api/abschuesse";
   const itemId = form.item?.id;
   const fillWeather = (target) => {
     if (form.type !== "abschuss") return;
@@ -1721,7 +1543,6 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
   }, [originPick, formId, setOriginPick]);
 
   const archiveItem = async () => {
-    if (form.type === "aktivitaet") return;
     const nextStatus = itemStatus === "archiviert" ? "aktiv" : "archiviert";
     if (!editing || !itemId) {
       setItemStatus(nextStatus);
@@ -1762,9 +1583,6 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
       if (!values.name.trim()) { setError("Name fehlt"); return; }
     } else if (form.type === "kamera") {
       if (!values.typ) { setError("Typ fehlt"); return; }
-    } else if (form.type === "aktivitaet") {
-      if (!values.name.trim()) { setError("Name fehlt"); return; }
-      if (!values.dauer_stunden) { setError("Dauer fehlt"); return; }
     } else if (form.type === "abschuss") {
       if (!values.wildart) { setError("Wildart fehlt"); return; }
     }
@@ -1772,13 +1590,12 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
     setError("");
     try {
       const body = { ...values, kanzel_id: "", schuss_kanzel_id: "", position_lat: point.lat, position_lng: point.lng };
-      if (form.type !== "aktivitaet") body.status = itemStatus;
+      body.status = itemStatus;
       if (body.typ === "Sonstiges" && body.typ_sonstiges) body.typ = body.typ_sonstiges;
       delete body.typ_sonstiges;
       if (body.wildart === "Sonstiges" && body.wildart_sonstiges) body.wildart = customWildartValue(body.wildart_sonstiges);
       delete body.wildart_sonstiges;
       await api(editing ? `${path}/${form.item.id}` : path, { method: editing ? "PATCH" : "POST", body });
-      if (form.type === "aktivitaet" && body.dauer_stunden) localStorage.setItem(ACTIVITY_DURATION_KEY, String(body.dauer_stunden));
       await load();
     } catch (err) {
       setError(err.message);
@@ -1790,8 +1607,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
       <form className="modal" noValidate onSubmit={submit}>
-        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : form.type === "aktivitaet" ? "Aktivität" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
-        {form.type !== "aktivitaet" ? <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} /> : null}
+        <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} />
         {form.type === "kanzel" || form.type === "kamera" ? (
           <>
             {form.type === "kamera" ? (
@@ -1806,23 +1623,6 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
                 {values.typ === "Sonstiges" ? <label><input value={values.typ_sonstiges || ""} maxLength={INPUT_LIMITS.custom} onChange={(e) => set("typ_sonstiges", e.target.value)} placeholder="Eintippen" /></label> : null}
               </>
             )}
-            <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
-          </>
-        ) : form.type === "aktivitaet" ? (
-          <>
-            <label>Name<input required value={values.name} maxLength={INPUT_LIMITS.itemName} onChange={(e) => set("name", e.target.value)} /></label>
-            <label>Dauer (Stunden)<input inputMode="decimal" maxLength={INPUT_LIMITS.decimal} value={values.dauer_stunden} onChange={(e) => set("dauer_stunden", decimalInput(e.target.value))} /></label>
-            <label>Richtung<select value={values.richtung_grad !== "" && values.richtung_grad !== null && values.richtung_grad !== undefined ? values.richtung_grad : ""} onChange={(e) => set("richtung_grad", e.target.value ? Number(e.target.value) : "")}>
-              <option value="">Keine</option>
-              <option value="0">N</option>
-              <option value="45">NO</option>
-              <option value="90">O</option>
-              <option value="135">SO</option>
-              <option value="180">S</option>
-              <option value="225">SW</option>
-              <option value="270">W</option>
-              <option value="315">NW</option>
-            </select></label>
             <NoteField value={values.notiz} onChange={(v) => set("notiz", v)} />
           </>
         ) : (
@@ -1880,8 +1680,8 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
         <div className="form-buttons">
           <div className="form-action-row">
             <button className="quiet move-button" type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} onClick={() => setOriginPick({ formId, mode: "move", type: form.type, target: point, origin: null })}>Verschieben</button>
-            {form.type !== "aktivitaet" ? <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`quiet ${actionLoading === "archive" ? "is-loading" : ""}`} onClick={archiveItem}>{itemStatus === "archiviert" ? "Aktivieren" : "Archivieren"}</button> : null}
-            <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => editing ? setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: form.type === "aktivitaet" ? "Die Aktivität wird dauerhaft entfernt." : "Oft ist es besser, das Element zu archivieren.", action: deleteItem }) : deleteItem()}><Trash2 size={16} />Löschen</button>
+            <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`quiet ${actionLoading === "archive" ? "is-loading" : ""}`} onClick={archiveItem}>{itemStatus === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
+            <button type="button" disabled={saving || Boolean(actionLoading) || imageLoading !== null} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => editing ? setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: "Oft ist es besser, das Element zu archivieren.", action: deleteItem }) : deleteItem()}><Trash2 size={16} />Löschen</button>
           </div>
           <button className={`primary ${saving ? "is-loading" : ""}`} type="submit" disabled={saving || Boolean(actionLoading) || imageLoading !== null}>{saving ? "Speichert" : "Speichern"}</button>
         </div>
@@ -2063,7 +1863,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
       {!isViewer ? (
         <div className="actions">
           <button type="button" disabled={Boolean(actionLoading)} onClick={() => openForm({ type: selected.type, mode: "edit", item, point: { lat: item.position_lat, lng: item.position_lng } })}>Bearbeiten</button>
-          {selected.type !== "aktivitaet" ? <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button> : null}
+          <button type="button" disabled={Boolean(actionLoading)} className={actionLoading === "archive" ? "is-loading" : ""} onClick={archive}>{item.status === "archiviert" ? "Aktivieren" : "Archivieren"}</button>
           <button type="button" disabled={Boolean(actionLoading)} className={`danger ${actionLoading === "delete" ? "is-loading" : ""}`} onClick={() => setConfirmAction({ message: "Sicher, dass du löschen willst?", hint: "Oft ist es besser, das Element zu archivieren.", action: del })}><Trash2 size={16} />Löschen</button>
         </div>
       ) : null}
@@ -2132,17 +1932,6 @@ function Rows({ selected, item, data }) {
   const origin = selected.type === "abschuss" ? shotOrigin(item, data) : null;
   const distance = selected.type === "abschuss" ? shotDistance(item, data) : null;
   const windText = item.wind || formatWind(item);
-  if (selected.type === "aktivitaet") {
-    const remainingH = activityRemainingHours(item);
-    return (
-      <dl>
-        <dt>Dauer</dt><dd>{remainingH <= 0 ? "abgelaufen" : `${formatActivityHours(remainingH)} Stunden`}</dd>
-        {item.richtung_grad !== null && item.richtung_grad !== undefined ? <><dt>Richtung</dt><dd>{windDirection(Number(item.richtung_grad))}</dd></> : null}
-        <dt>Position</dt><dd>{positionText(item)}</dd>
-        <dt>Erstellt</dt><dd>{new Date(item.created_at).toLocaleString("de")}</dd>
-      </dl>
-    );
-  }
   if (selected.type === "abschuss") {
     return (
       <dl>
@@ -2294,7 +2083,6 @@ function findObject(data, selected) {
 function apiName(type) {
   if (type === "kanzel") return "kanzeln";
   if (type === "kamera") return "kameras";
-  if (type === "aktivitaet") return "aktivitaeten";
   return "abschuesse";
 }
 
