@@ -6,6 +6,7 @@ import L from "leaflet";
 import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
+import { createNavigationHistory, createImageHistory } from "./historyNavigation.js";
 
 let LAST_ZOOM = null;
 
@@ -390,6 +391,7 @@ function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [mapLayer, setMapLayer] = useState(() => localStorage.getItem("jagd-layer") || "sat");
+  const navigation = useRef(null);
 
   const load = async () => setData(await api("/api/map-data"));
 
@@ -470,6 +472,31 @@ function App() {
     setOriginPick(null);
     setForm(next);
   };
+
+  useEffect(() => {
+    if (!data) return undefined;
+    const controller = createNavigationHistory(window, (state) => {
+      setView(state.view);
+      setSettingsOpen(state.settingsOpen);
+      setSelected(state.selected);
+      setCreateAt(state.createAt);
+      setForm(state.form);
+      setOriginPick(state.originPick);
+      setAccountOpen(state.accountOpen);
+      setConfirmAction(state.confirmAction);
+      setListTab(state.listTab);
+    });
+    navigation.current = controller;
+    return () => { controller.dispose(); navigation.current = null; };
+  }, [Boolean(data)]);
+
+  useEffect(() => {
+    if (!data) return;
+    navigation.current?.record({
+      view, settingsOpen, selected, createAt, form, originPick,
+      accountOpen, confirmAction, listTab,
+    });
+  }, [Boolean(data), view, settingsOpen, selected, createAt, form, originPick, accountOpen, confirmAction, listTab]);
 
   if (!data) return <Login error={loginError} onLogin={async (body) => {
     try {
@@ -1735,6 +1762,13 @@ function ImageSlots({ images, setImage, clearImage, loading }) {
 
 function DetailPanel({ data, selected, item, close, load, openForm, isViewer, setConfirmAction }) {
   const [imageOpen, setImageOpen] = useState(false);
+  const imageNavigation = useRef(null);
+  useEffect(() => {
+    const controller = createImageHistory(window, setImageOpen);
+    imageNavigation.current = controller;
+    return () => { controller.dispose(); imageNavigation.current = null; };
+  }, []);
+  const closeImage = () => imageNavigation.current?.close();
   const [imageIdx, setImageIdx] = useState(0);
   const [actionLoading, setActionLoading] = useState("");
   const stageRef = useRef(null);
@@ -1777,7 +1811,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
   };
   const openImage = () => {
     transformRef.current = { scale: 1, x: 0, y: 0 };
-    setImageOpen(true);
+    imageNavigation.current?.open();
   };
   const startImageDrag = (clientX, clientY) => {
     if (transformRef.current.scale <= 1) return;
@@ -1830,7 +1864,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
           {detailImages.length ? (
             <div className="detail-thumbs">
               {detailImages.map((src, i) => (
-                <button key={src} type="button" className="image-thumb" onClick={() => { transformRef.current = { scale: 1, x: 0, y: 0 }; setImageIdx(i); setImageOpen(true); }}><ImagePreview src={src} /></button>
+                <button key={src} type="button" className="image-thumb" onClick={() => { setImageIdx(i); openImage(); }}><ImagePreview src={src} /></button>
               ))}
             </div>
           ) : null}
@@ -1851,12 +1885,12 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
         </div>
       ) : null}
       {imageOpen ? createPortal((
-        <div className="image-lightbox" onClick={() => setImageOpen(false)}>
-          <button type="button" className="image-close" onClick={() => setImageOpen(false)} aria-label="Schließen"><X size={20} /></button>
+        <div className="image-lightbox" onClick={closeImage}>
+          <button type="button" className="image-close" onClick={(event) => { event.stopPropagation(); closeImage(); }} aria-label="Schließen"><X size={20} /></button>
           <div
             className="image-stage"
             ref={stageRef}
-            onClick={(event) => { event.stopPropagation(); if (transformRef.current.scale <= 1) setImageOpen(false); }}
+            onClick={(event) => { event.stopPropagation(); if (transformRef.current.scale <= 1) closeImage(); }}
             onWheel={(event) => {
               event.preventDefault();
               zoomImageAt(event.clientX, event.clientY, transformRef.current.scale + (event.deltaY < 0 ? 0.45 : -0.45));
