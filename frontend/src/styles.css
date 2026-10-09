@@ -675,7 +675,7 @@ button:disabled, input:disabled {
 }
 .image-close {
   position: fixed;
-  top: 14px;
+  top: calc(env(safe-area-inset-top, 0px) + 26px);
   right: 14px;
   z-index: 1;
   width: 38px;
