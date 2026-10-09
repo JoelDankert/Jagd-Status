@@ -17,7 +17,10 @@ const dbPath = process.env.DB_PATH || path.join(dataDir, "jagdapp.sqlite");
 const distDir = path.join(root, "frontend", "dist");
 const host = process.env.HOST || "10.66.66.1";
 const port = Number(process.env.PORT || 3067);
-const sessions = new Map();
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+function sessionHash(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 const BCRYPT_ROUNDS = 10;
 const TEXT_LIMITS = {
   revier: 80,
@@ -208,6 +211,14 @@ function setupDb() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS auth_session (
+      token_hash TEXT PRIMARY KEY,
+      revier_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+      expires_at INTEGER NOT NULL,
+      FOREIGN KEY (revier_id) REFERENCES revier(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS auth_session_expires ON auth_session(expires_at);
     CREATE TABLE IF NOT EXISTS revier_request (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
@@ -375,10 +386,13 @@ function ensureSettings(revierId) {
 }
 
 function requireAuth(req, res, next) {
-  const session = sessions.get(req.cookies.jagd_session);
+  const token = req.cookies.jagd_session;
+  if (!token || typeof token !== "string") return res.status(401).json({ error: "Nicht angemeldet" });
+  const session = db.prepare("SELECT revier_id, role FROM auth_session WHERE token_hash = ? AND expires_at > ?")
+    .get(sessionHash(token), Date.now());
   if (!session) return res.status(401).json({ error: "Nicht angemeldet" });
-  req.revierId = typeof session === "string" ? session : session.revierId;
-  req.role = typeof session === "string" ? "admin" : session.role;
+  req.revierId = session.revier_id;
+  req.role = session.role;
   next();
 }
 
@@ -504,9 +518,6 @@ app.post("/api/admin/delete-requests/:id/approve", (req, res) => {
     if (!request) return res.status(404).json({ error: "Löschanfrage nicht gefunden" });
     db.prepare("DELETE FROM revier_delete_request WHERE id = ?").run(request.id);
     db.prepare("DELETE FROM revier WHERE id = ?").run(request.revier_id);
-    for (const [token, session] of sessions.entries()) {
-      if (session.revierId === request.revier_id) sessions.delete(token);
-    }
     res.json(adminSnapshot());
   } catch (error) {
     fail(res, error);
@@ -530,9 +541,6 @@ app.delete("/api/admin/reviere/:id", (req, res) => {
     if (!revier) return res.status(404).json({ error: "Gebiet nicht gefunden" });
     db.prepare("DELETE FROM revier_delete_request WHERE revier_id = ?").run(req.params.id);
     db.prepare("DELETE FROM revier WHERE id = ?").run(req.params.id);
-    for (const [token, session] of sessions.entries()) {
-      if (session.revierId === req.params.id) sessions.delete(token);
-    }
     res.json(adminSnapshot());
   } catch (error) {
     fail(res, error);
@@ -562,12 +570,14 @@ app.post("/api/login", async (req, res) => {
     ensureSettings(revier.id);
 
     const token = crypto.randomBytes(32).toString("base64url");
-    sessions.set(token, { revierId: revier.id, role });
+    db.prepare("DELETE FROM auth_session WHERE expires_at <= ?").run(Date.now());
+    db.prepare("INSERT INTO auth_session (token_hash, revier_id, role, expires_at) VALUES (?, ?, ?, ?)")
+      .run(sessionHash(token), revier.id, role, Date.now() + SESSION_MAX_AGE_MS);
     res.cookie("jagd_session", token, {
       httpOnly: true,
       sameSite: "lax",
       secure: req.secure,
-      maxAge: 30 * 24 * 60 * 60 * 1000,
+      maxAge: SESSION_MAX_AGE_MS,
     });
     res.json({ ok: true, role });
   } catch (error) {
@@ -576,7 +586,10 @@ app.post("/api/login", async (req, res) => {
 });
 
 app.post("/api/logout", (req, res) => {
-  if (req.cookies.jagd_session) sessions.delete(req.cookies.jagd_session);
+  const token = req.cookies.jagd_session;
+  if (token && typeof token === "string") {
+    db.prepare("DELETE FROM auth_session WHERE token_hash = ?").run(sessionHash(token));
+  }
   res.clearCookie("jagd_session", { httpOnly: true, sameSite: "lax", secure: req.secure });
   res.json({ ok: true });
 });
