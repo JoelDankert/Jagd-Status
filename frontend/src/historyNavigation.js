@@ -1,3 +1,13 @@
+export function createBackHandler(win, navigation) {
+  return () => {
+    if (win.history.state?.jagdImage) {
+      win.history.back();
+      return true;
+    }
+    return navigation.back();
+  };
+}
+
 export function createImageHistory(win, setOpen) {
   let token = null;
   const onPop = (event) => setOpen(Boolean(token && event.state?.jagdImage === token));
@@ -24,6 +34,7 @@ export function createNavigationHistory(win, onRestore) {
   let serial = 0;
   let current = null;
   let root = null;
+  let rootId = null;
   const same = (a, b) => Boolean(a && b)
     && Object.keys(a).length === Object.keys(b).length
     && Object.keys(a).every((key) => a[key] === b[key]);
@@ -44,11 +55,18 @@ export function createNavigationHistory(win, onRestore) {
       frames.set(id, snapshot);
       if (current === null) {
         root = snapshot;
+        rootId = id;
         win.history.replaceState({ ...(win.history.state || {}), jagdNav: id }, '');
       } else {
         win.history.pushState({ ...(win.history.state || {}), jagdNav: id }, '');
       }
       current = snapshot;
+    },
+    back() {
+      const id = win.history.state?.jagdNav;
+      if (!id || id === rootId || !frames.has(id)) return false;
+      win.history.back();
+      return true;
     },
     dispose() { win.removeEventListener('popstate', onPop); },
   };
