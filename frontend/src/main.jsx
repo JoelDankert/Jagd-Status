@@ -6,7 +6,7 @@ import L from "leaflet";
 import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
-import { createNavigationHistory, createImageHistory } from "./historyNavigation.js";
+import { createNavigationHistory, createImageHistory, createBackHandler } from "./historyNavigation.js";
 
 let LAST_ZOOM = null;
 
@@ -487,7 +487,13 @@ function App() {
       setListTab(state.listTab);
     });
     navigation.current = controller;
-    return () => { controller.dispose(); navigation.current = null; };
+    const handleBack = createBackHandler(window, controller);
+    window.jagdHandleBack = handleBack;
+    return () => {
+      if (window.jagdHandleBack === handleBack) delete window.jagdHandleBack;
+      controller.dispose();
+      navigation.current = null;
+    };
   }, [Boolean(data)]);
 
   useEffect(() => {

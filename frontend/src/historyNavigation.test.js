@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNavigationHistory, createImageHistory } from './historyNavigation.js';
+import { createNavigationHistory, createImageHistory, createBackHandler } from './historyNavigation.js';
 
 function browser() {
   const entries = [{ state: null }];
@@ -57,6 +57,29 @@ test('image back closes only the image; the next back restores the previous page
   assert.equal(page, detail);
   win.history.back();
   assert.equal(page, root);
+  image.dispose();
+  nav.dispose();
+});
+
+test('Android back handler closes image, then detail, then returns false at root', () => {
+  const win = browser();
+  let restored = null;
+  let imageOpen = false;
+  const nav = createNavigationHistory(win, (state) => { restored = state; });
+  const root = { view: 'map', selected: null };
+  const detail = { view: 'map', selected: { type: 'kanzel', id: 42 } };
+  nav.record(root);
+  const back = createBackHandler(win, nav);
+  assert.equal(back(), false, 'root has no in-app page to return to');
+  nav.record(detail);
+  const image = createImageHistory(win, (open) => { imageOpen = open; });
+  image.open();
+  assert.equal(back(), true);
+  assert.equal(imageOpen, false);
+  assert.equal(restored, detail);
+  assert.equal(back(), true);
+  assert.equal(restored, root);
+  assert.equal(back(), false);
   image.dispose();
   nav.dispose();
 });
