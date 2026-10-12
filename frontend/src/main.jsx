@@ -7,9 +7,6 @@ import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X 
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 import { createNavigationHistory, createImageHistory, createBackHandler } from "./historyNavigation.js";
-import { configureMapRendering } from "./tileRendering.js";
-
-configureMapRendering(L, navigator.userAgent);
 
 let LAST_ZOOM = null;
 
