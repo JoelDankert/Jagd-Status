@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import { MapContainer, Marker, Pane, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
-import { Layers, List, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
+import { Layers, List, Heart, LocateFixed, Map as MapIcon, Search, Settings, Trash2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 import { createNavigationHistory, createImageHistory, createBackHandler } from "./historyNavigation.js";
@@ -827,12 +827,13 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
   }, [open]);
   return (
     <div className="header-menu">
-      <button type="button" className="quiet header-menu-btn" ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><span>...</span></button>
+      <button type="button" className="quiet header-menu-btn" aria-label="Menü öffnen" aria-expanded={open} ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><span>...</span></button>
       {open ? createPortal((
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
           <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; localStorage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
           <button type="button" onClick={() => { window.location.href = "/rechtliches"; }}>Rechtliches</button>
+          <a className="header-donate" href="https://ko-fi.com/joeldankert" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}><Heart size={16} aria-hidden="true" />Spenden</a>
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
       ), document.body) : null}

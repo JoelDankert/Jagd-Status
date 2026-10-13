@@ -289,7 +289,7 @@ textarea { min-height: 80px; resize: none; }
   min-width: 140px;
   overflow: hidden;
 }
-.header-dropdown button {
+.header-dropdown button, .header-dropdown a {
   display: block;
   width: 100%;
   padding: 10px 14px;
@@ -300,9 +300,18 @@ textarea { min-height: 80px; resize: none; }
   background: transparent;
   color: var(--text);
 }
-.header-dropdown button:hover {
-  background: var(--soft);
+.header-dropdown button:hover, .header-dropdown a:hover, .header-dropdown a:focus-visible {
+  background: var(--panel);
 }
+.header-dropdown .header-donate {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  text-decoration: none;
+}
+.header-donate svg { color: #d16969; fill: #d1696926; }
 .tabs {
   display: inline-flex;
   gap: 3px;
