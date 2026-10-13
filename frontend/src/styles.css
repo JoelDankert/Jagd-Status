@@ -307,7 +307,6 @@ textarea { min-height: 80px; resize: none; }
   display: flex;
   align-items: center;
   gap: 9px;
-  border-top: 1px solid var(--line);
   color: var(--text);
   text-decoration: none;
 }

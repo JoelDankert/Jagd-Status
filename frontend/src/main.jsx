@@ -833,7 +833,7 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
           <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; localStorage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
           <button type="button" onClick={() => { window.location.href = "/rechtliches"; }}>Rechtliches</button>
-          <a className="header-donate" href="https://ko-fi.com/joeldankert" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}><Heart size={16} aria-hidden="true" />Spenden</a>
+          <a className="header-donate" href="https://ko-fi.com/joeldankert" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>Spenden<Heart size={16} aria-hidden="true" /></a>
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
       ), document.body) : null}
