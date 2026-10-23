@@ -1,0 +1,45 @@
+export const TUTORIAL_STEPS = [
+  {
+    action: "showKanzel",
+    target: "[data-tour='kanzel-detail']",
+    title: "Eine echte Kanzel öffnen",
+    text: "Hier siehst du Fotos, Bauart, Notiz und Position aus dem vorbereiteten Demo-Revier.",
+    cta: "Zur Kanzelliste",
+  },
+  {
+    action: "showKanzelList",
+    target: ".list-screen .rows",
+    title: "Kanzeln als Liste vergleichen",
+    text: "Die Liste ist dieselbe Ansicht wie in der App. Suchen, filtern und „Anzeigen“ führen zurück zur Karte.",
+    cta: "Abschuss ansehen",
+  },
+  {
+    action: "showAbschuss",
+    target: "[data-tour='abschuss-detail']",
+    title: "Einen Abschuss nachvollziehen",
+    text: "Datum, Schütze, Wetter, Entfernung und Bilder stehen gemeinsam in der echten Detailansicht.",
+    cta: "Etwas anlegen",
+  },
+  {
+    action: "showCreate",
+    target: ".create-choices",
+    title: "Am Ort erfassen",
+    text: "Doppelklick oder langes Drücken öffnet diese echte Auswahl. Für die Einführung ist ein Beispielort vorbereitet.",
+    cta: "Kanzel-Formular öffnen",
+  },
+  {
+    action: "showCreateForm",
+    target: "[data-tour='object-form']",
+    title: "Eine Kanzel selbst anlegen",
+    text: "Trag einen Namen ein und speichere gern. Die Änderung bleibt ausschließlich im lokalen Demo-Sandkasten.",
+    cta: "Anzeige einstellen",
+    minimizable: true,
+  },
+  {
+    action: "showSettings",
+    target: "[data-tour='settings-panel']",
+    title: "Die Karte passend einstellen",
+    text: "Ebenen, Archiv und Zeitraum lassen sich hier ausprobieren. Danach kannst du frei erkunden oder alles zurücksetzen.",
+    cta: "Frei erkunden",
+  },
+];

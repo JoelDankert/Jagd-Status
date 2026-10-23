@@ -8,6 +8,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
 import Database from "better-sqlite3";
+import { createTutorialRouter } from "./tutorialRoutes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -41,6 +42,7 @@ db.pragma("foreign_keys = ON");
 const app = express();
 app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
+app.use("/api/tutorial", createTutorialRouter());
 
 function id() {
   return crypto.randomUUID();

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import { MapContainer, Marker, Pane, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
@@ -7,29 +7,13 @@ import { Layers, List, Heart, LocateFixed, Map as MapIcon, Search, Settings, Tra
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 import { createNavigationHistory, createImageHistory, createBackHandler } from "./historyNavigation.js";
+import { api, runtime, storage } from "./runtime.js";
 
 let LAST_ZOOM = null;
 
 // Frühere Versionen speicherten hier Reviername und Klartext-Passwort.
-// Der Server-Session-Cookie genügt für Reloads; Altbestände werden entfernt.
-localStorage.removeItem("jagd-credentials");
-
-const api = async (path, options = {}) => {
-  const doFetch = async () => {
-    const res = await fetch(path, {
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      ...options,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
-    const text = await res.text();
-    let json;
-    try { json = text ? JSON.parse(text) : {}; } catch { throw new Error(res.ok ? `Unerwartete Antwort: ${text.slice(0, 120)}` : `Fehler ${res.status}`); }
-    if (!res.ok) { const error = new Error(json.error || "Fehler"); error.status = res.status; error.code = json.code; throw error; }
-    return json;
-  };
-  return doFetch();
-};
+// Nur der normale Einstieg räumt diesen Altbestand auf; die Demo berührt keine Produktiv-Keys.
+if (!/^\/tutorial\/?$/.test(window.location.pathname)) storage.removeItem("jagd-credentials");
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -183,9 +167,7 @@ function formatWind(item) {
 }
 
 function imageSrc(value) {
-  if (!value) return null;
-  if (value.startsWith("data:")) return value;
-  return `/api/images/${value}`;
+  return runtime.imageSrc(value);
 }
 
 function readImage(file) {
@@ -346,6 +328,7 @@ function localId() {
 }
 
 function requestFullscreen() {
+  if (!runtime.allowFullscreen) return;
   if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
   document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
 }
@@ -365,10 +348,10 @@ function useLongPressClear(clear) {
   };
 }
 
-function App() {
+export function App({ tutorialBridge } = {}) {
   const [data, setData] = useState(null);
   const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem("jagd-theme");
+    const saved = storage.getItem("jagd-theme");
     if (saved) return saved;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
@@ -385,12 +368,12 @@ function App() {
   const [filters, setFilters] = useState({
     q: "",
     showArchived: true,
-    from: localStorage.getItem("jagd-list-date-from") || "",
-    to: localStorage.getItem("jagd-list-date-to") || "",
+    from: storage.getItem("jagd-list-date-from") || "",
+    to: storage.getItem("jagd-list-date-to") || "",
   });
   const [accountOpen, setAccountOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
-  const [mapLayer, setMapLayer] = useState(() => localStorage.getItem("jagd-layer") || "sat");
+  const [mapLayer, setMapLayer] = useState(() => storage.getItem("jagd-layer") || "sat");
   const navigation = useRef(null);
 
   const load = async () => setData(await api("/api/map-data"));
@@ -406,7 +389,7 @@ function App() {
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => {
-      if (!localStorage.getItem("jagd-theme")) {
+      if (!storage.getItem("jagd-theme")) {
         setTheme(mq.matches ? "dark" : "light");
       }
     };
@@ -415,7 +398,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("jagd-layer", mapLayer);
+    storage.setItem("jagd-layer", mapLayer);
   }, [mapLayer]);
 
   useEffect(() => {
@@ -474,6 +457,37 @@ function App() {
   };
 
   useEffect(() => {
+    if (!tutorialBridge || !data) return undefined;
+    const firstWithImage = (items) => items.find((item) => item.bild_data || item.bild2 || item.bild3) || items[0];
+    tutorialBridge({
+      showKanzel() {
+        const item = firstWithImage(data.kanzeln);
+        showView("map");
+        if (item) openSelection({ type: "kanzel", id: item.id });
+      },
+      showKanzelList() { closeWindows(); setListTab("kanzeln"); setView("list"); },
+      showAbschuss() {
+        const item = firstWithImage(data.abschuesse);
+        closeWindows(); setListTab("abschuesse"); setView("list");
+        if (item) openSelection({ type: "abschuss", id: item.id });
+      },
+      showCreate() {
+        const example = data.kanzeln[0] || data.abschuesse[0] || data.kameras[0];
+        closeWindows(); setView("map");
+        if (example) openCreate({ lat: Number(example.position_lat) + 0.00015, lng: Number(example.position_lng) + 0.00015 });
+      },
+      showCreateForm() {
+        const example = data.kanzeln[0] || data.abschuesse[0] || data.kameras[0];
+        closeWindows(); setView("map");
+        if (example) openForm({ type: "kanzel", point: { lat: Number(example.position_lat) + 0.00015, lng: Number(example.position_lng) + 0.00015 } });
+      },
+      showSettings() { closeWindows(); setView("map"); setSettingsOpen(true); },
+      closeWindows,
+    });
+    return () => tutorialBridge(null);
+  }, [tutorialBridge, data]);
+
+  useEffect(() => {
     if (!data) return undefined;
     const controller = createNavigationHistory(window, (state) => {
       setView(state.view);
@@ -529,9 +543,18 @@ function App() {
         <strong>{data.revier.name}</strong>
         <nav className="tabs">
           <button className={view === "map" ? "active" : ""} onClick={() => showView("map")}><MapIcon size={17} />Karte</button>
-          <button className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
+          <button data-tour="list-tab" className={view === "list" ? "active" : ""} onClick={() => showView("list")}><List size={17} />Liste</button>
         </nav>
-        <HeaderMenu onLogout={async () => { await api("/api/logout", { method: "POST" }); setData(null); }} onAccount={() => { closeWindows(); setAccountOpen(true); }} isViewer={isViewer} theme={theme} setTheme={setTheme} />
+        <HeaderMenu
+          onLogout={async () => {
+            if (runtime.mode === "tutorial") { window.location.href = "/"; return; }
+            await api("/api/logout", { method: "POST" }); setData(null);
+          }}
+          onAccount={() => {
+            closeWindows(); setAccountOpen(true);
+          }}
+          isViewer={isViewer} theme={theme} setTheme={setTheme}
+        />
       </header>
 
       {view === "map" ? (
@@ -608,6 +631,7 @@ function Login({ error, onLogin, onRequestRegistration }) {
         <button className={`primary ${loading ? "is-loading" : ""}`} type="submit" disabled={loading}>Anmelden</button>
         <p className="error">{error}</p>
         <a className="legal-link" href="/rechtliches">Rechtliches</a>
+        <a className="legal-link" href="/tutorial">Einführung</a>
       </form>
       {registrationConfirm ? (
         <ConfirmDialog
@@ -827,12 +851,13 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
   }, [open]);
   return (
     <div className="header-menu">
-      <button type="button" className="quiet header-menu-btn" aria-label="Menü öffnen" aria-expanded={open} ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><span>...</span></button>
+      <button data-tour="menu" type="button" className="quiet header-menu-btn" aria-label="Menü öffnen" aria-expanded={open} ref={btnRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><span>...</span></button>
       {open ? createPortal((
         <div className="header-dropdown" style={{ position: "fixed", top: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 4, right: window.innerWidth - (btnRef.current?.getBoundingClientRect().right ?? 0) }}>
-          <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; localStorage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
+          <button type="button" onClick={() => { setOpen(false); const next = theme === "light" ? "dark" : "light"; storage.setItem("jagd-theme", next); setTheme(next); }}>{theme === "light" ? "Dunkel" : "Hell"}</button>
           {!isViewer ? <button type="button" onClick={() => { setOpen(false); onAccount(); }}>Account</button> : null}
           <button type="button" onClick={() => { window.location.href = "/rechtliches"; }}>Rechtliches</button>
+          <button type="button" onClick={() => { window.location.href = "/tutorial"; }}>Einführung</button>
           <a className="header-donate" href="https://ko-fi.com/joeldankert" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>Spenden<Heart size={16} aria-hidden="true" /></a>
           <button type="button" onClick={() => { setOpen(false); onLogout(); }}>Abmelden</button>
         </div>
@@ -842,6 +867,7 @@ function HeaderMenu({ onLogout, onAccount, isViewer, theme, setTheme }) {
 }
 
 function AccountPanel({ data, load, close, setConfirmAction }) {
+  const isTutorial = runtime.mode === "tutorial";
   const [name, setName] = useState(data.revier.name);
   const [passwort, setPasswort] = useState("••••••••");
   const [viewerPasswort, setViewerPasswort] = useState(data.revier.has_viewer_passwort ? "••••••••" : "");
@@ -863,6 +889,10 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
       .finally(() => setSaving(false));
   };
   const requestDelete = () => {
+    if (isTutorial) {
+      setError("Demo: Es wird keine Löschanfrage versendet und kein echter Zugang verändert.");
+      return;
+    }
     setDeleteSaving(true);
     setError("");
     api("/api/revier/delete-request", { method: "POST" })
@@ -886,12 +916,13 @@ function AccountPanel({ data, load, close, setConfirmAction }) {
     <div className="overlay">
       <form className="modal small" noValidate onSubmit={(e) => { e.preventDefault(); requestSave(); }}>
         <header><h2>Account-Daten ändern</h2><button type="button" onClick={close}><X size={18} /></button></header>
+        {isTutorial ? <p className="muted" data-tour="demo-account-note">Demo: Der Reviername wird nur lokal geändert. Passwörter und echte Zugänge bleiben unverändert.</p> : null}
         <label>Reviername<input value={name} maxLength={INPUT_LIMITS.revier} onChange={(e) => setName(e.target.value)} /></label>
-        <label>Revierpasswort<input type="password" value={passwort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
-        <label>Gast-Passwort<input type="password" value={viewerPasswort} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
+        <label>Revierpasswort<input type="password" value={passwort} disabled={isTutorial} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setPasswort(e.target.value); adminTouched.current = true; }} /></label>
+        <label>Gast-Passwort<input type="password" value={viewerPasswort} disabled={isTutorial} maxLength={INPUT_LIMITS.passwort} onChange={(e) => { setViewerPasswort(e.target.value); viewerTouched.current = true; }} /></label>
         {error ? <p className="error">{error}</p> : null}
         <button type="submit" className={`primary ${saving ? "is-loading" : ""}`} disabled={saving}>Speichern</button>
-        <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => setDeleteConfirm(true)}><Trash2 size={16} />Löschung anfragen</button>
+        <button type="button" className={"danger account-delete-button " + (deleteSaving ? "is-loading" : "")} disabled={saving || deleteSaving} onClick={() => isTutorial ? requestDelete() : setDeleteConfirm(true)}><Trash2 size={16} />Löschung anfragen</button>
       </form>
       {deleteConfirm ? (
         <ConfirmDialog
@@ -987,7 +1018,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
   const toggleLayer = () => setMapLayer(mapLayer === "osm" ? "sat" : "osm");
   const flyToSelection = (sel) => { setAnimateMove(false); openSelection(sel); };
   return (
-    <main className={`map-shell${data.settings.show_geschlecht === 0 ? " hide-gender" : ""}`} data-layer={mapLayer}>
+    <main data-tour="map-area" className={`map-shell${data.settings.show_geschlecht === 0 ? " hide-gender" : ""}`} data-layer={mapLayer}>
       <MapContainer zoomControl={false} zoomSnap={0} zoomDelta={0.25} wheelPxPerZoomLevel={90} maxZoom={20} doubleClickZoom={false} attributionControl={false} worldCopyJump={false} className="map">
         <MapInit center={center} defaultZoom={defaultZoom} mapLayer={mapLayer} />
         <MapInteractionVisibility />
@@ -1010,6 +1041,7 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
             icon={markerIcon("kanzel", kanzel, kanzel.status === "archiviert")}
             zIndexOffset={visible.kanzeln.length - i}
             eventHandlers={{
+              add: (event) => { if (i === 0) event.target.getElement()?.setAttribute("data-tour", "first-kanzel"); },
               click: (event) => {
                 if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
                 if (originPick && originPick.mode !== "move") setOriginPick({ ...originPick, origin: { type: "kanzel", id: kanzel.id, lat: kanzel.position_lat, lng: kanzel.position_lng } });
@@ -1040,8 +1072,8 @@ function MapScreen({ data, selected, openSelection, openCreate, originPick, setO
         {selfPos && Number(data.settings.show_self_location) ? <Marker pane={MAP_PANES.self} position={selfPos} icon={L.divIcon({ className: "self-marker", html: "", iconSize: [18, 18], iconAnchor: [9, 9] })} /> : null}
       </MapContainer>
       <div className="map-top-right">
-        <button className="icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
-        <button className="icon-button" type="button" onClick={toggleLayer} title={mapLayer === "osm" ? "Satellit" : "Karte"}><MapIcon size={18} /></button>
+        <button data-tour="settings" className="icon-button" type="button" onClick={openSettings} title="Einstellungen"><Settings size={18} /></button>
+        <button data-tour="layer" className="icon-button" type="button" onClick={toggleLayer} title={mapLayer === "osm" ? "Satellit" : "Karte"}><MapIcon size={18} /></button>
       </div>
       <div className="map-attribution">{mapLayer === "osm" ? '\u00a9 OpenStreetMap' : '\u00a9 Esri'}</div>
     </main>
@@ -1260,6 +1292,15 @@ function MapTools({ setSelfPos }) {
 
   const locate = () => {
     setError("");
+    if (runtime.mode === "tutorial") {
+      const simulated = runtime.simulatedLocation;
+      if (simulated) {
+        setSelfPos(simulated);
+        map.flyTo(simulated, Math.max(map.getZoom(), 16));
+        setError("Beispielposition");
+      } else setError("In der Demo ist der Standort deaktiviert");
+      return;
+    }
     const current = lastLocation.current;
     if (current) {
       map.flyTo(current.position, Math.max(map.getZoom(), 16));
@@ -1334,13 +1375,13 @@ function FlyToSelection({ data, selected, animate }) {
 function SettingsPanel({ data, load, close }) {
   const [local, setLocal] = useState({
     ...data.settings,
-    map_date_filter_from: localStorage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from || "",
-    map_date_filter_to: localStorage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to || "",
+    map_date_filter_from: storage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from || "",
+    map_date_filter_to: storage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to || "",
   });
   const [saving, setSaving] = useState(false);
   const s = data.settings;
-  const effFrom = localStorage.getItem("jagd-map-date-from") || s.map_date_filter_from || "";
-  const effTo = localStorage.getItem("jagd-map-date-to") || s.map_date_filter_to || "";
+  const effFrom = storage.getItem("jagd-map-date-from") || s.map_date_filter_from || "";
+  const effTo = storage.getItem("jagd-map-date-to") || s.map_date_filter_to || "";
   const dirty = Object.keys(local).some((k) => {
     if (k === "map_date_filter_from") return local.map_date_filter_from !== effFrom;
     if (k === "map_date_filter_to") return local.map_date_filter_to !== effTo;
@@ -1352,7 +1393,7 @@ function SettingsPanel({ data, load, close }) {
       const body = {};
       for (const key of Object.keys(local)) {
         if (key === "map_date_filter_from" || key === "map_date_filter_to") {
-          localStorage.setItem(`jagd-map-date-${key.replace("map_date_filter_", "")}`, local[key] || "");
+          storage.setItem(`jagd-map-date-${key.replace("map_date_filter_", "")}`, local[key] || "");
           if (local[key] !== s[key]) body[key] = local[key];
         } else if (local[key] !== s[key]) {
           body[key] = local[key];
@@ -1371,7 +1412,7 @@ function SettingsPanel({ data, load, close }) {
   const clearTo = () => { setLocal((prev) => ({ ...prev, map_date_filter_to: "" })); };
   return (
     <div className="overlay">
-      <section className="modal small">
+      <section className="modal small" data-tour="settings-panel">
         <header><h2><Layers size={18} /> Einstellungen</h2><button type="button" onClick={close}><X size={18} /></button></header>
         {[
           ["show_archived", "Archivierte"],
@@ -1623,7 +1664,7 @@ function ObjectForm({ data, form, originPick, setOriginPick, close, load, refres
 
   return (
     <div className={`overlay ${picking ? "is-picking" : ""}`}>
-      <form className="modal" noValidate onSubmit={submit}>
+      <form className="modal" data-tour="object-form" noValidate onSubmit={submit}>
         <header><h2>{form.type === "kanzel" ? "Kanzel" : form.type === "kamera" ? "Markierung" : "Abschuss"}{editing ? " bearbeiten" : ""}</h2><button type="button" onClick={close}><X size={18} /></button></header>
         <ImageSlots images={[values.bild_data, values.bild2, values.bild3]} setImage={setImage} clearImage={clearImage} loading={imageLoading} />
         {form.type === "kanzel" || form.type === "kamera" ? (
@@ -1865,7 +1906,7 @@ function DetailPanel({ data, selected, item, close, load, openForm, isViewer, se
   };
   const detailImages = [item.bild_data, item.bild2, item.bild3].map(imageSrc).filter(Boolean);
   return (
-    <aside className="detail">
+    <aside className="detail" data-tour={selected.type === "kanzel" ? "kanzel-detail" : selected.type === "abschuss" ? "abschuss-detail" : "detail"}>
       <header>
         <div className="detail-title">
           {detailImages.length ? (
@@ -1977,8 +2018,8 @@ function Rows({ selected, item, data }) {
 function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelection, load, setConfirmAction, setAnimateMove }) {
   const [sortBy, setSortBy] = useState("datum");
   const [sortDir, setSortDir] = useState("desc");
-  const clearFrom = () => { setFilters((current) => ({ ...current, from: "" })); localStorage.removeItem("jagd-list-date-from"); };
-  const clearTo = () => { setFilters((current) => ({ ...current, to: "" })); localStorage.removeItem("jagd-list-date-to"); };
+  const clearFrom = () => { setFilters((current) => ({ ...current, from: "" })); storage.removeItem("jagd-list-date-from"); };
+  const clearTo = () => { setFilters((current) => ({ ...current, to: "" })); storage.removeItem("jagd-list-date-to"); };
   const sortOptions = [{ key: "datum", label: "Datum" }, { key: "schussdistanz", label: "Schussdistanz" }, { key: "gewicht_kg", label: "Gewicht" }, { key: "alter_text", label: "Alter" }];
   useEffect(() => {
     if (tab === "abschuesse") { setSortBy("datum"); setSortDir("desc"); }
@@ -2014,8 +2055,8 @@ function ListScreen({ data, tab, setTab, filters, setFilters, setView, openSelec
       <div className="filters">
         <label>Suchen<input value={filters.q} maxLength={INPUT_LIMITS.search} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></label>
         <label className="check list-toggle"><input type="checkbox" checked={filters.showArchived} onChange={(e) => setFilters({ ...filters, showArchived: e.target.checked })} />Archivierte anzeigen</label>
-        {tab === "abschuesse" ? <label>Von{filters.from ? <span className="field-with-button"><input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} />}</label> : null}
-        {tab === "abschuesse" ? <label>Bis{filters.to ? <span className="field-with-button"><input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} /><button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; localStorage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} />}</label> : null}
+        {tab === "abschuesse" ? <label>Von{filters.from ? <span className="field-with-button"><input type="date" value={filters.from} onChange={(e) => { const v = e.target.value; storage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} /><button type="button" className="image-remove" onClick={clearFrom} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; storage.setItem("jagd-list-date-from", v); setFilters({ ...filters, from: v }); }} />}</label> : null}
+        {tab === "abschuesse" ? <label>Bis{filters.to ? <span className="field-with-button"><input type="date" value={filters.to} onChange={(e) => { const v = e.target.value; storage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} /><button type="button" className="image-remove" onClick={clearTo} aria-label="Löschen"><Trash2 size={16} /></button></span> : <input type="date" value="" onChange={(e) => { const v = e.target.value; storage.setItem("jagd-list-date-to", v); setFilters({ ...filters, to: v }); }} />}</label> : null}
       </div>
       {tab === "abschuesse" ? (
         <label className="sort-label">Sortierung
@@ -2043,8 +2084,8 @@ function useVisibleData(data) {
   return useMemo(() => {
     const archived = Number(data.settings.show_archived);
     const active = (item) => archived || item.status !== "archiviert";
-    const from = localStorage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from;
-    const to = localStorage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to;
+    const from = storage.getItem("jagd-map-date-from") || data.settings.map_date_filter_from;
+    const to = storage.getItem("jagd-map-date-to") || data.settings.map_date_filter_to;
     const date = (item) => (!from || item.datum >= from) && (!to || item.datum <= to);
     return {
       kanzeln: data.kanzeln.filter(active),
@@ -2143,9 +2184,12 @@ function rowMeta(tab, item, data) {
   return item.typ || `${Number(item.position_lat).toFixed(5)}, ${Number(item.position_lng).toFixed(5)}`;
 }
 
+const TutorialShell = lazy(() => import("./tutorial/TutorialShell.jsx"));
+
 function Root() {
   if (window.location.pathname === "/admin") return <AdminPage />;
   if (window.location.pathname === "/rechtliches") return <LegalPage />;
+  if (/^\/tutorial\/?$/.test(window.location.pathname)) return <Suspense fallback={<main className="tutorial-loading">Demo wird vorbereitet …</main>}><TutorialShell><App /></TutorialShell></Suspense>;
   return <App />;
 }
 
@@ -2170,6 +2214,8 @@ function LegalPage() {
         <p>Fragen zu gespeicherten Daten oder deren Berichtigung und Löschung bitte an <a href="mailto:joel.dankert@gmail.com">joel.dankert@gmail.com</a> richten.</p>
 
         <a className="legal-back" href="/">Zurück zur Anwendung</a>
+        <br />
+        <a className="legal-back" href="/tutorial">Einführung</a>
       </article>
     </main>
   );
