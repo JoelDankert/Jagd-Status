@@ -26,7 +26,6 @@ export default function TutorialShell({ children }) {
   const [error, setError] = useState("");
   const [welcome, setWelcome] = useState(true);
   const [step, setStep] = useState(-1);
-  const [minimized, setMinimized] = useState(false);
   const bridge = useRef(null);
   const welcomeRef = useRef(null);
   const priorFocus = useRef(null);
@@ -65,7 +64,6 @@ export default function TutorialShell({ children }) {
     if (step < 0) return undefined;
     const definition = TUTORIAL_STEPS[step];
     bridge.current?.[definition.action]?.();
-    setMinimized(false);
     let cancelled = false;
     let timer;
     let attempts = 0;
@@ -90,17 +88,18 @@ export default function TutorialShell({ children }) {
   if (error) return <main className="tutorial-unavailable"><section><h1>Demo nicht verfügbar</h1><p>{error}</p><a href="/">Zur Anwendung</a></section></main>;
   if (!ready) return <main className="tutorial-loading" aria-live="polite">Demo-Revier wird geladen …</main>;
   const current = TUTORIAL_STEPS[step];
-  return <div className="tutorial-root">
+  return <div className={`tutorial-root${current ? ` guide-${current.placement}` : ""}`}>
     {cloneElement(children, { tutorialBridge: registerBridge })}
     {!welcome && !current ? <details className="tutorial-badge"><summary>Demo</summary><div><button onClick={() => setStep(0)}>Einführung</button><button onClick={() => { adapter.reset(); demoStorage.clear(); location.reload(); }}>Zurücksetzen</button><a href="/">Beenden</a></div></details> : null}
     {welcome ? <div className="tutorial-welcome" role="dialog" aria-modal="true" aria-labelledby="tutorial-title" ref={welcomeRef}>
       <section><h1 id="tutorial-title">Dein Revier. Einmal ausprobieren.</h1><p>Kanzeln, Abschüsse und Kartenfunktionen direkt mit vorbereiteten Beispielen kennenlernen – ohne Anmeldung und ohne echte Daten zu verändern.</p><div><button className="primary" onClick={() => leaveWelcome(true)}>Kurz zeigen lassen</button><button onClick={() => leaveWelcome(false)}>Selbst erkunden</button></div><a href="/">Demo verlassen</a></section>
     </div> : null}
-    {current ? <section className={`tutorial-guide${minimized ? " is-minimized" : ""}`} aria-live="polite" aria-label={`Schritt ${step + 1} von ${TUTORIAL_STEPS.length}`}>
+    {current ? <section className="tutorial-guide" aria-live="polite" aria-label={`Schritt ${step + 1} von ${TUTORIAL_STEPS.length}`}>
       <small>{step + 1} / {TUTORIAL_STEPS.length}</small>
-      {minimized ? <button className="tutorial-expand" onClick={() => setMinimized(false)}>Hinweis zeigen</button> : <><h2>{current.title}</h2><p>{current.text}</p><div className="tutorial-actions"><button disabled={step === 0} onClick={() => setStep(step - 1)}>Zurück</button><button className="primary" onClick={() => setStep(step + 1 < TUTORIAL_STEPS.length ? step + 1 : -1)}>{current.cta}</button></div></>}
-      {!minimized && current.minimizable ? <button className="tutorial-minimize" onClick={() => setMinimized(true)}>Minimieren</button> : null}
-      {!minimized ? <div className="tutorial-guide-links"><button onClick={() => setStep(-1)}>Überspringen</button><a href="/">Demo verlassen</a></div> : null}
+      <h2>{current.title}</h2>
+      <p>{current.text}</p>
+      <div className="tutorial-actions"><button disabled={step === 0} onClick={() => setStep(step - 1)}>Zurück</button><button className="primary" onClick={() => setStep(step + 1 < TUTORIAL_STEPS.length ? step + 1 : -1)}>{step + 1 < TUTORIAL_STEPS.length ? "Weiter" : "Fertig"}</button></div>
+      <button className="tutorial-end" onClick={() => setStep(-1)}>Führung beenden</button>
     </section> : null}
   </div>;
 }
